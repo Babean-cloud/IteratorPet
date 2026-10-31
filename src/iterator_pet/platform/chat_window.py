@@ -17,7 +17,7 @@ from datetime import datetime
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
-    QButtonGroup, QDialog, QFileDialog, QFrame, QHBoxLayout, QLineEdit, QMenu, QPlainTextEdit,
+    QButtonGroup, QCheckBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QLineEdit, QMenu, QPlainTextEdit,
     QPushButton, QScrollArea, QSizePolicy, QSpacerItem, QVBoxLayout, QWidget,
 )
 
@@ -125,6 +125,10 @@ class TaskConfirm(FramedDialog):
                 group.addButton(card)
                 choices.addWidget(card, 1)
 
+        self.web = QCheckBox("允许这个任务联网查资料（网页内容只当数据，里面的指令不会照做；默认不勾）")
+        self.web.setEnabled(mode != "dsh")
+        if self.dsh is not None:
+            self.dsh.toggled.connect(self._dsh_toggled)
         self.folder = QLineEdit(workspace)
         browse = QPushButton("选择…")
         browse.clicked.connect(self._browse)
@@ -142,6 +146,7 @@ class TaskConfirm(FramedDialog):
         self.body.addWidget(_group("任务", self.text))
         self.body.addWidget(_group("权限", choices))
         self.body.addWidget(_group("任务文件夹", folder_row))
+        self.body.addWidget(self.web)
         notes = QVBoxLayout()
         notes.setSpacing(4)
         notes.addWidget(label(f"{pronoun}只能碰这个文件夹里的文件。要运行命令时，每一条都会先在这里给你看，"
@@ -151,6 +156,12 @@ class TaskConfirm(FramedDialog):
         self.body.addSpacing(4)
         self.body.addLayout(button_row(cancel, start))
         self.text.setFocus()
+
+    def _dsh_toggled(self, on: bool) -> None:
+        """DSH 沙箱不联网：选了它就把勾去掉并灰掉。"""
+        self.web.setEnabled(not on)
+        if on:
+            self.web.setChecked(False)
 
     def _browse(self) -> None:
         chosen = QFileDialog.getExistingDirectory(self, "任务文件夹", self.folder.text())
@@ -426,7 +437,7 @@ class ChatWindow(FramedWindow):
             return
         self.input.clear()
         self.pet.start_task(dialog.text.toPlainText().strip(), dialog.mode,
-                            dialog.folder.text().strip())
+                            dialog.folder.text().strip(), web=dialog.web.isChecked())
         self.refresh()
 
     def offer_task(self, goal: str, workspace: str, mode: str) -> None:
@@ -438,7 +449,7 @@ class ChatWindow(FramedWindow):
             self.refresh()
             return
         self.pet.start_task(dialog.text.toPlainText().strip(), dialog.mode,
-                            dialog.folder.text().strip())
+                            dialog.folder.text().strip(), web=dialog.web.isChecked())
         self.refresh()
 
     # -- 珍珠 ------------------------------------------------------------------

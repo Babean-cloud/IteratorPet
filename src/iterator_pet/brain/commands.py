@@ -29,9 +29,9 @@ class Spec:
 
 
 COMMANDS = (
-    Spec("work", "/work [-r|-w|-d] [-C 文件夹] 要做的事", "让它去干一件长活（读文件、整理、跑命令）",
+    Spec("work", "/work [-r|-w|-d] [-n] [-C 文件夹] 要做的事", "让它去干一件长活（读文件、整理、跑命令）",
          aliases=("w", "do"),
-         flags=(("-r", "只读（默认）"), ("-w", "可写任务文件夹"), ("-d", "DSH 沙箱，只读"),
+         flags=(("-r", "只读（默认）"), ("-w", "可写任务文件夹"), ("-d", "DSH 沙箱，只读"), ("-n", "允许这个任务联网查资料（-d 不支持）"),
                 ("-C", "换任务文件夹，比如 -C D:\\notes")),
          takes_value=("-C", "--dir")),
     Spec("remind", "/remind 25m|1h20m|21:30 内容", "定时提醒，本地计时，不花 token", aliases=("r",)),
@@ -113,6 +113,8 @@ def _check(command: Command) -> None:
         modes = [m for m in ("r", "w", "d") if command.flags.get(m)]
         if len(modes) > 1:
             raise CommandError("-r / -w / -d 只能选一个。")
+        if command.flags.get("n") and command.flags.get("d"):
+            raise CommandError("-d（DSH 沙箱）不能联网。")
         if not command.text:
             raise CommandError("要它做什么？比如：/work -r 去读一下 README，列个大纲")
     elif command.name == "remind":

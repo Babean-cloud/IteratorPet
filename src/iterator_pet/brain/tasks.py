@@ -122,6 +122,7 @@ class Task:
     approval: object = None           # 正在等用户批准的命令（executor.Approval）
     approval_why: str = ""
     approved: set = field(default_factory=set)   # 这次任务里你批准过的命令：同一条不再问
+    web: bool = False                 # 确认卡上勾了「联网」：这个任务才有 web_search / web_fetch
 
     @property
     def finished(self) -> bool:

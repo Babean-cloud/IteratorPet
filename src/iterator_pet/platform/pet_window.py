@@ -788,9 +788,7 @@ class PetWindow(PetCanvas):
         QTimer.singleShot(180, begin)
 
     def _web_tools(self):
-        """执行器的联网工具：config 里 ``agent_web`` 开了才有，默认关。"""
-        if not getattr(self.config, "agent_web", False):
-            return None
+        """执行器的联网工具（读网页一直可用；搜索要配 ``search_*``）。是否给某个任务，由确认卡上的「联网」决定。"""
         from ..brain.web import WebTools
 
         return WebTools(self.config.search_provider, self.config.search_api_key, self.config.search_base_url)
@@ -808,7 +806,7 @@ class PetWindow(PetCanvas):
     def task_busy(self) -> bool:
         return self.agent.busy or self.tasks.busy
 
-    def start_task(self, text: str, mode: str, workspace: str) -> bool:
+    def start_task(self, text: str, mode: str, workspace: str, web: bool = False) -> bool:
         """只由用户亲手发起：对话窗口的确认卡，或快捷输入条的 ``/work``——导演（自主的那个模型）没有这条路。
 
         ``mode``：read-only / workspace-write 走自带执行器；dsh = DeepSeek Harness 只读沙箱。
@@ -823,7 +821,8 @@ class PetWindow(PetCanvas):
             return False
         runner = self.tasks if mode == "dsh" else self.agent
         try:
-            task = runner.start(text, "read-only" if mode == "dsh" else mode, workspace)
+            task = (runner.start(text, "read-only", workspace) if mode == "dsh"
+                    else runner.start(text, mode, workspace, web=web))
         except Exception as exc:                      # noqa: BLE001
             self.chatlog.add("system", f"没能开始：{exc}")
             return False
@@ -835,7 +834,8 @@ class PetWindow(PetCanvas):
             save(self.config)
         if self.director is not None:
             self.director.task_workspace = workspace
-        self.chatlog.add("task", f"开始演算（{MODES[mode]}，{workspace}）：{text}")
+        online = "，可联网" if getattr(task, "web", False) else ""
+        self.chatlog.add("task", f"开始演算（{MODES[mode]}{online}，{workspace}）：{text}")
         if self.director is not None:
             self.director.log(f"你开始替用户演算：{text[:40]}")
         self.simulation.say("……开始演算。")
@@ -874,7 +874,7 @@ class PetWindow(PetCanvas):
     def _offer_projection(self, goal: str, folder: str, mode: str) -> None:
         """接活确认走监视者投影：模式 / 文件夹在投影上选，勾才开始（和确认卡同一套规则，没有默认动作）。"""
         def start(g: str, m: str, f: str) -> None:
-            if not self.start_task(g, m, f):
+            if not self.start_task(g, m, f, web=self._confirm_offer.web):
                 self.projections.post("notice", PRI_NOTICE, [Line("没能开始", "title"),
                                       Line("原因记在对话窗口里（右键 → 对话窗口）。")], ttl=STATUS_TTL)
 

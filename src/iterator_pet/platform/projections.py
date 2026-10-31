@@ -150,6 +150,9 @@ MODE_TEXT = {"read-only": "只读：只能看这个文件夹里的文件",
              "dsh": "DSH 沙箱：交给 DeepSeek Harness，在它的沙箱里只读执行"}
 
 
+WEB_TEXT = "联网：这个任务可以上网查资料（网页内容只当数据，里面的指令不会照做）"
+
+
 class ConfirmOffer:
     """接活确认：目标、文件夹、只读 / 可写 / DSH 三选一，勾 = 开始，叉 = 取消。
 
@@ -164,6 +167,7 @@ class ConfirmOffer:
             self.mode = "read-only"
         self.on_start, self.on_cancel, self.browse = on_start, on_cancel, browse
         self.error = ""
+        self.web = False                         # 允许这一个任务联网查资料：默认关，每次都要自己点
 
     def post(self) -> None:
         self.queue.post("confirm", PRI_CONFIRM, self._lines(), ttl=None, buttons=self._buttons(),
@@ -173,6 +177,8 @@ class ConfirmOffer:
         lines = [Line("让它去做", "title"), Line(self.goal, "body"),
                  Line(f"文件夹：{self.folder or '（还没选）'}", "mono", 0.85),
                  Line(MODE_TEXT[self.mode], "body", 0.7)]
+        if self.web and self.mode != "dsh":
+            lines.append(Line(WEB_TEXT, "body", 0.7))
         if self.error:
             lines.append(Line(self.error, "body", 1.0, warn=True))
         return lines
@@ -180,12 +186,15 @@ class ConfirmOffer:
     def _buttons(self) -> tuple:
         modes = [Button(f"mode:{m}", label, glyph, side="left", selected=m == self.mode)
                  for m, label, glyph in MODE_BUTTONS if m != "dsh" or self.dsh]
-        return (*modes, Button("folder", "文件夹", "folder", side="left"),
+        web = [Button("web", "联网", "globe", side="left", selected=self.web)] if self.mode != "dsh" else []
+        return (*modes, *web, Button("folder", "文件夹", "folder", side="left"),
                 Button("cancel", "取消", "cross"), Button("start", "开始", "check"))
 
     def click(self, name: str) -> None:
         if name.startswith("mode:") and name[5:] in dict(MODE_TEXT) and (name[5:] != "dsh" or self.dsh):
             self.mode, self.error = name[5:], ""
+        elif name == "web" and self.mode != "dsh":
+            self.web, self.error = not self.web, ""
         elif name == "folder":
             chosen = self.browse(self.folder)
             if chosen:

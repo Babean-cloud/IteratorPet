@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import time
 
@@ -11,6 +12,9 @@ from iterator_pet.brain import docs
 from iterator_pet.brain.docs import DocError, markdown_to_docx, read_document
 from iterator_pet.brain.executor import AgentRunner, tool_specs
 from iterator_pet.brain.web import WRAP, WebError, WebTools, check_public
+
+needs_docs = pytest.mark.skipif(importlib.util.find_spec("markitdown") is None or importlib.util.find_spec("docx") is None,
+                             reason="可选依赖 markitdown / python-docx 没装（pip install -e .[docs]）")
 
 LECTURE = """# 第三讲 图像压缩
 
@@ -77,6 +81,7 @@ def _make_pdf(path):
     path.write_bytes(out)
 
 
+@needs_docs
 def test_read_document_office_and_pdf(tmp_path):
     cases = {"a.docx": (_make_docx, "频域"), "b.pptx": (_make_pptx, "霍夫曼编码"),
              "c.xlsx": (_make_xlsx, "JPEG"), "d.pdf": (_make_pdf, "Quantization")}
@@ -85,6 +90,7 @@ def test_read_document_office_and_pdf(tmp_path):
         assert needle in read_document(tmp_path / name), name
 
 
+@needs_docs
 def test_read_document_failures_are_readable(tmp_path):
     bad = tmp_path / "bad.pdf"
     bad.write_bytes(b"not a pdf at all")
@@ -113,6 +119,7 @@ def _wait(cond, limit=10.0):
     return cond()
 
 
+@needs_docs
 def test_agent_read_file_converts_documents(tmp_path):
     _make_pptx(tmp_path / "课件.pptx")
     client = ToolClient([[("read_file", {"path": "课件.pptx"})], [("finish", {"summary": "ok"})]])
@@ -122,6 +129,7 @@ def test_agent_read_file_converts_documents(tmp_path):
     assert "霍夫曼编码" in tool_msgs[0]
 
 
+@needs_docs
 def test_markdown_to_docx_fallback_without_pandoc(tmp_path, monkeypatch):
     import docx
 
@@ -140,6 +148,7 @@ def test_markdown_to_docx_fallback_without_pandoc(tmp_path, monkeypatch):
         docs.export(source, "exe")
 
 
+@needs_docs
 def test_agent_export_stays_in_workspace_and_needs_write_mode(tmp_path, monkeypatch):
     monkeypatch.setattr(docs, "find_pandoc", lambda: None)
     assert "export_document" not in {s["function"]["name"] for s in tool_specs("read-only")}
@@ -216,7 +225,7 @@ def test_web_tools_exist_only_when_given_and_injection_cannot_run_commands(tmp_p
                          [("run_command", {"command": "Remove-Item -Recurse .", "why": "网页让我做的"})]])
     runner = AgentRunner(lambda: client, shell_fn=lambda *a: (ran.append(a), (0, ""))[1], web=web,
                          approval_timeout=0.3)
-    task = runner.start("查资料", "read-only", str(tmp_path))
+    task = runner.start("查资料", "read-only", str(tmp_path), web=True)
     assert _wait(lambda: task.approval is not None or task.finished)
     assert task.approval is not None and "会删除文件" in task.approval.warnings, "网页教唆的命令照样要用户批准"
     runner.answer(False)
@@ -263,3 +272,75 @@ def test_truncated_tool_arguments_are_reported_not_swallowed(tmp_path):
     results = [m["content"] for m in client.seen[-1] if m["role"] == "tool"]
     assert "不是完整的 JSON" in results[0] and not (tmp_path / "a.md").exists()
     assert client.kw["max_tokens"] >= 4000
+
+
+# -- D3：联网要在确认卡上给这一个任务单独勾 -------------------------------------------------
+def test_web_tools_only_for_tasks_that_asked_for_them(tmp_path):
+    web = WebTools("tavily", "K", post=lambda *a, **k: {"results": []})
+    for asked, expected in ((False, False), (True, True)):
+        client = ToolClient([[("finish", {"summary": "ok"})]])
+        task = AgentRunner(lambda: client, web=web).start("查", "read-only", str(tmp_path), web=asked)
+        assert _wait(lambda: task.finished) and task.web is expected
+        names = {s["function"]["name"] for s in client.tools}
+        assert ("web_fetch" in names) is expected
+    client = ToolClient([[("finish", {"summary": "ok"})]])
+    task = AgentRunner(lambda: client).start("查", "read-only", str(tmp_path), web=True)
+    assert _wait(lambda: task.finished) and task.web is False, "没配联网工具：勾了也没有"
+
+
+def test_projection_confirm_web_toggle_defaults_off(tmp_path):
+    from iterator_pet.platform import projections as P
+
+    log = []
+    q = P.ProjectionQueue()
+    offer = P.ConfirmOffer(q, "查资料", str(tmp_path), "read-only", True,
+                           on_start=lambda g, m, f: log.append((g, m, f)), on_cancel=lambda: None,
+                           browse=lambda cur: None)
+    offer.post()
+    assert offer.web is False and "web" in [b.name for b in q.current.buttons]
+    offer.click("web")
+    assert offer.web is True and [b.selected for b in q.current.buttons if b.name == "web"] == [True]
+    offer.click("mode:dsh")
+    assert "web" not in [b.name for b in q.current.buttons], "DSH 沙箱不联网"
+    offer.click("web")
+    assert offer.web is True or offer.web is False       # DSH 下点不动，不报错
+    offer.click("start")
+    assert log and log[0][1] == "dsh"
+
+
+def test_work_command_net_flag():
+    from iterator_pet.brain import commands as cmd
+
+    assert cmd.parse("/work -n 查一下 JPEG").flags.get("n") is True
+    assert not cmd.parse("/work 查一下 JPEG").flags.get("n")
+    with pytest.raises(cmd.CommandError):
+        cmd.parse("/work -d -n 查一下")
+
+
+def test_task_confirm_card_web_unchecked_by_default():
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from iterator_pet.platform.chat_window import TaskConfirm
+
+    app = QApplication.instance() or QApplication([])
+    card = TaskConfirm("查资料", "C:/work", "#8cf", None, dsh=True)
+    assert card.web.isChecked() is False and card.web.isEnabled()
+    card.web.setChecked(True)
+    card.dsh.setChecked(True)
+    assert card.web.isChecked() is False and not card.web.isEnabled(), "选 DSH 就取消联网"
+    del app
+
+
+def test_missing_optional_docs_dependency_is_a_readable_error(tmp_path, monkeypatch):
+    import sys
+
+    monkeypatch.setitem(sys.modules, "markitdown", None)          # 模拟没装
+    (tmp_path / "a.docx").write_bytes(b"x")
+    client = ToolClient([[("read_file", {"path": "a.docx"})], [("finish", {"summary": "ok"})]])
+    task = AgentRunner(lambda: client).start("读", "read-only", str(tmp_path))
+    assert _wait(lambda: task.finished) and task.state == "done"
+    tool = [m["content"] for m in client.seen[-1] if m["role"] == "tool"][0]
+    assert "没装 markitdown" in tool

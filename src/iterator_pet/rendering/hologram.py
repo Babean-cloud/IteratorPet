@@ -186,6 +186,10 @@ def _draw_glyph(p: QPainter, glyph: str, c: QPointF, color, alpha: float) -> Non
         p.drawLine(QPointF(x - 8, y + 8), QPointF(x - 8, y + 3))
         p.drawLine(QPointF(x - 8, y + 8), QPointF(x - 3, y + 8))
         p.drawLine(QPointF(x + 4, y - 8), QPointF(x + 8, y - 4))
+    elif glyph == "globe":              # 联网
+        p.drawEllipse(QPointF(x, y), 9.0, 9.0)
+        p.drawEllipse(QPointF(x, y), 4.0, 9.0)
+        p.drawLine(QPointF(x - 9, y), QPointF(x + 9, y))
     elif glyph == "shield":             # 沙箱
         p.drawPolyline([QPointF(x - 7, y - 7), QPointF(x + 7, y - 7), QPointF(x + 7, y + 1), QPointF(x, y + 9),
                         QPointF(x - 7, y + 1), QPointF(x - 7, y - 7)])

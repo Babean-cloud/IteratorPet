@@ -15,11 +15,12 @@ dependencies = [
     "winrt-Windows.Storage.Streams>=4!10.0.28000.2705; sys_platform == 'win32'",
     "comtypes>=1.4; sys_platform == 'win32'",
     "rapidfuzz>=3", "pypinyin>=0.50",
-    "markitdown[pdf,docx,pptx,xlsx]>=0.1.5", "python-docx>=1.1",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pyinstaller>=6.0"]
+# 读 PDF / PPT / Word / Excel、把讲义导出成 docx（brain/docs.py）：体积大，不装只是这两项用不了
+docs = ["markitdown[pdf,docx,pptx,xlsx]>=0.1.5", "python-docx>=1.1"]
+dev = ["pytest>=8", "pyinstaller>=6.0", "markitdown[pdf,docx,pptx,xlsx]>=0.1.5", "python-docx>=1.1"]
 
 [project.scripts]
 iterator-pet = "iterator_pet.main:main"

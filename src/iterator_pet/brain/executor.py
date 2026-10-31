@@ -16,8 +16,8 @@ DSH 的可写沙箱在用户机器上起不来 pwsh（0xC0000142，见 README �
 
 * ``read_file`` 遇到 PDF / PPT / Word / Excel 会用 markitdown 转成文字（``docs.py``）；
 * ``export_document``：可写模式下把任务文件夹里的 Markdown 导出成 docx / pdf（``docs.py``）；
-* ``web_search`` / ``web_fetch``：**默认不给**。只有构造 ``AgentRunner(web=…)`` 时才有（``web.py``），
-  返回的网页内容一律当数据，抓网页拒绝内网地址。联网权限的开关和确认卡（D3）还没做。
+* ``web_search`` / ``web_fetch``：**默认不给**。只有 ``AgentRunner(web=…)`` 配了、并且这个任务在确认卡上
+  勾了「联网」（``start(web=True)``）才有（``web.py``）；返回的网页内容一律当数据，抓网页拒绝内网地址。
 
 不给的：改桌宠自己、读任务文件夹以外的东西。子进程环境里去掉 ``DEEPSEEK_API_KEY``。
 和 dsh 一样，任务只能由用户在对话窗口亲手发起，导演（看屏幕的那个模型）调不到这里。
@@ -258,7 +258,7 @@ class AgentRunner:
     def busy(self) -> bool:
         return self.current is not None and not self.current.finished
 
-    def start(self, text: str, mode: str, workspace: str) -> Task:
+    def start(self, text: str, mode: str, workspace: str, web: bool = False) -> Task:
         if self.busy:
             raise RuntimeError("已经有一个任务在跑")
         if mode not in ("read-only", "workspace-write"):
@@ -267,7 +267,8 @@ class AgentRunner:
         if client is None:
             raise RuntimeError("还没设置 DeepSeek API Key")
         Path(workspace).mkdir(parents=True, exist_ok=True)
-        task = Task(text=text.strip(), mode=mode, workspace=str(Path(workspace).resolve()))
+        task = Task(text=text.strip(), mode=mode, workspace=str(Path(workspace).resolve()),
+                    web=bool(web) and self.web_fn() is not None)
         self.current = task
         threading.Thread(target=self._run, args=(task, client), daemon=True).start()
         return task
@@ -292,7 +293,7 @@ class AgentRunner:
 
     # -- 工作线程 ------------------------------------------------------------------
     def _run(self, task: Task, client) -> None:
-        web = self.web_fn()
+        web = self.web_fn() if task.web else None         # 联网只给用户在确认卡上勾了的任务
         messages = [{"role": "system", "content": system_prompt(task.workspace, task.mode, web)},
                     {"role": "user", "content": task.text}]
         tools = tool_specs(task.mode, web)

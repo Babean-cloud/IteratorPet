@@ -109,10 +109,9 @@ class Config:
     asr_base_url: str = ""
     asr_model: str = ""
     asr_api_key: str = ""
-    # 委托任务联网（brain/web.py）：默认关。开了才给执行器 web_fetch；配了搜索服务才有 web_search
+    # 委托任务联网（brain/web.py）：每个任务在确认卡上单独勾「联网」才有，默认不勾。
+    # 配了搜索服务才有 web_search，没配只能读网页
     # （search_provider: tavily / brave / searxng；key 只在本机；searxng 填 search_base_url）。
-    # 注意：联网权限的确认卡还没做，现在只能手动改 config.json 打开。
-    agent_web: bool = False
     search_provider: str = ""
     search_api_key: str = ""
     search_base_url: str = ""

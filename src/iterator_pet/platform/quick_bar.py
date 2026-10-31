@@ -56,7 +56,7 @@ def _do_work(pet, command) -> tuple[bool, str]:
     folder = os.path.expandvars(os.path.expanduser(folder.strip('"')))
     if not os.path.isdir(folder):
         return True, f"✗ 没有这个文件夹：{folder}"
-    if not pet.start_task(command.text, mode, folder):
+    if not pet.start_task(command.text, mode, folder, web=bool(command.flags.get("n"))):
         return True, "✗ " + (pet.chatlog.entries[-1]["text"] if pet.chatlog.entries else "没能开始。")
     return False, ""
 
