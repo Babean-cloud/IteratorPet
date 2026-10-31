@@ -1,0 +1,39 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.venv/
+venv/
+
+# Local render/QA artefacts (never publish)
+preview*.png
+!docs/preview.png
+!docs/preview-pixel-lighting.png
+crop*.png
+window-grab*.png
+replay*.json
+puppet-portrait*.png
+
+# 本地开发笔记（AI 交接文档、设计草稿）和一次性调试脚本：不公开
+dev/
+
+# 本地评测结果（含模型回复）、本机配置
+tools/eval_runs/
+config.json
+*.bak*
+
+# 根目录误生成的空文件
+/always
+/exclude
+
+# Editors / OS
+.idea/
+.vscode/
+Thumbs.db
+desktop.ini
+
+# .NET tool build output (tools/ildump)
+bin/
+obj/

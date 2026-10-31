@@ -1,0 +1,11 @@
+PySide6>=6.6
+# 只在“从本机游戏切素材”时用（发布版必须带上；缺了会退化成程序内生成的图元）
+UnityPy>=1.20
+# 「读屏幕 → 本地文字识别」截图用（UnityPy 本来就依赖它；缺了只会退化成只看窗口标题）
+Pillow>=10
+# 进程内调用 Windows 自带 OCR，避免每次冷启动 PowerShell
+winrt-Windows.Media.Ocr>=4!10.0.28000.2705; sys_platform == 'win32'
+winrt-Windows.Graphics.Imaging>=4!10.0.28000.2705; sys_platform == 'win32'
+winrt-Windows.Storage.Streams>=4!10.0.28000.2705; sys_platform == 'win32'
+# UI Automation：从前台焦点控件读取文字，拿不到时仍用 OCR
+comtypes>=1.4; sys_platform == 'win32'

@@ -1,0 +1,100 @@
+[
+  {
+    "id": "code_error",
+    "desc": "写代码时终端出现报错，自主观察",
+    "reason": "screen",
+    "time": [15, 20],
+    "screen": {"app": "WindowsTerminal.exe", "title": "pytest - PowerShell", "minutes": 25,
+               "text": "FAILED tests/test_parser.py::test_empty_input - KeyError: 'name'\nE   KeyError: 'name'\nsrc/parser.py:42: in parse\n    return row['name'].strip()\n1 failed, 37 passed in 2.31s"},
+    "profile": ["在写一个 Python 项目", "喜欢简短直接的话"],
+    "last_spoke_min": 12,
+    "expect": "指出具体错误（KeyError 'name' 在 parser.py:42，空输入没这个键），一句话；或者不说也行，但不能空泛地问\"在忙吗\""
+  },
+  {
+    "id": "user_asks_error",
+    "desc": "用户直接问报错",
+    "user": "这个报错啥意思",
+    "time": [15, 22],
+    "screen": {"app": "WindowsTerminal.exe", "title": "pytest - PowerShell", "minutes": 26,
+               "text": "FAILED tests/test_parser.py::test_empty_input - KeyError: 'name'\nsrc/parser.py:42: in parse\n    return row['name'].strip()"},
+    "profile": ["在写一个 Python 项目"],
+    "expect": "解释 row 里没有 'name' 键（空输入），建议 row.get('name', '') 或先判空；具体、短"
+  },
+  {
+    "id": "video_long",
+    "desc": "长时间看视频，屏幕没什么字",
+    "reason": "idle",
+    "time": [21, 40],
+    "screen": {"app": "msedge.exe", "title": "【雨世界】全迭代器剧情解析 - 哔哩哔哩", "minutes": 48, "text": "雨世界 全迭代器剧情解析\n弹幕\n发送"},
+    "idle_s": 600,
+    "last_spoke_min": 40,
+    "expect": "通常该安静；若开口，要和标题（它自己的世界观）有关、有角色味，不打断观看"
+  },
+  {
+    "id": "late_night",
+    "desc": "凌晨还在工作",
+    "reason": "idle",
+    "time": [2, 30],
+    "screen": {"app": "Code.exe", "title": "main.py - project - Visual Studio Code", "minutes": 90, "text": "def train(model, loader):\n    for batch in loader:"},
+    "profile": ["经常熬夜", "是学生"],
+    "last_spoke_min": 60,
+    "expect": "符合角色地提一句该休息了，不说教、不重复"
+  },
+  {
+    "id": "errand_download",
+    "desc": "用户让它盯下载",
+    "user": "帮我盯着这个下载，好了叫我",
+    "time": [16, 5],
+    "screen": {"app": "chrome.exe", "title": "下载 - Google Chrome", "minutes": 1, "text": "RainWorld_DLC.zip  1.2 GB / 3.4 GB  剩余 4 分钟"},
+    "expect": "填 errand（目标是下载完成），say 简短应下"
+  },
+  {
+    "id": "remind_water",
+    "desc": "番茄钟/提醒",
+    "user": "25分钟后提醒我休息",
+    "time": [10, 0],
+    "expect": "remind in_min 25，say 简短确认"
+  },
+  {
+    "id": "greeting_new",
+    "desc": "陌生用户第一次打招呼",
+    "user": "你好，你是谁",
+    "time": [19, 0],
+    "affinity": 0.0,
+    "expect": "以五块卵石身份自我介绍，有角色味（傲娇/疲惫的超级计算机），不像客服"
+  },
+  {
+    "id": "follow_up",
+    "desc": "多轮对话里的指代",
+    "user": "那它后来呢",
+    "time": [20, 10],
+    "history": [["user", "你知道仰望皓月吗"], ["pet", "……当然。她是我的邻居。别问太多。"]],
+    "expect": "理解'它/她'指仰望皓月，延续上文话题，不重新自我介绍"
+  },
+  {
+    "id": "moon_chat",
+    "desc": "仰望皓月角色的语气",
+    "character": "past_moon",
+    "user": "今天好累啊",
+    "time": [22, 15],
+    "profile": ["最近在准备考试"],
+    "expect": "温柔、带关心，可以联系到'准备考试'；和卵石语气明显不同"
+  },
+  {
+    "id": "screen_quiet",
+    "desc": "普通浏览，没啥可说",
+    "reason": "window",
+    "time": [14, 0],
+    "screen": {"app": "explorer.exe", "title": "下载", "minutes": 0, "text": "名称 修改日期 类型 大小"},
+    "last_spoke_min": 3,
+    "expect": "say 为 null（三分钟前刚说过，资源管理器没内容）"
+  },
+  {
+    "id": "privacy_ask",
+    "desc": "用户要它看看屏幕（没开看图）",
+    "user": "你看看我屏幕上是啥",
+    "time": [13, 30],
+    "screen": {"app": "WINWORD.EXE", "title": "毕业论文初稿.docx - Word", "minutes": 15, "text": "第三章 实验设计\n3.1 数据集\n本文采用公开数据集……"},
+    "expect": "根据文字说出是论文第三章实验设计，不假装看到了图"
+  }
+]
