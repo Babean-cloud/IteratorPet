@@ -221,9 +221,9 @@ class Memory:
         所以两次对话之间的自主请求前缀不变，照样吃缓存。
         好感度数值每次都可能变，放在每轮观察里（``affinity``），不放这里。"""
         lines = ["【你的记忆】"]
-        talk = ("少说话（有具体的事才开口，大约十来分钟一句）" if talkativeness < 0.34 else
-                ("话可以多一点（有东西可说时一两分钟一句也行）" if talkativeness > 0.66
-                 else "适度说话（有具体的东西可说时，两三分钟一句正好）"))
+        talk = ("少说话（有具体的事才开口，两分钟以上才会放行一句）" if talkativeness < 0.34 else
+                ("话可以多一点（有东西可说时半分钟到一分钟一句也行）" if talkativeness > 0.66
+                 else "适度说话（有具体的东西可说时，一分多钟一句正好）"))
         lines.append(f"这个人希望你：{talk}")
         if self.goal:
             lines.append(f"你现在的小目标：{self.goal}")
