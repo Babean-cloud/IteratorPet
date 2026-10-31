@@ -18,6 +18,7 @@ puppet-portrait*.png
 
 # 本地开发笔记（AI 交接文档、设计草稿）和一次性调试脚本：不公开
 dev/
+.claude/settings.local.json
 
 # 本地评测结果（含模型回复）、本机配置
 tools/eval_runs/
