@@ -195,7 +195,8 @@ class PetWindow(PetCanvas):
         self._load_character_data()
         # 委托任务：默认自带执行器（executor.py）；装了 DeepSeek Harness 的话多一档"DSH 沙箱只读"
         self.agent = AgentRunner(lambda: self.llm_client(timeout=90.0),
-                                 auto_read_only=bool(getattr(config, "auto_approve_readonly", True)))
+                                 auto_read_only=bool(getattr(config, "auto_approve_readonly", True)),
+                                 web=self._web_tools)
         self.tasks = TaskRunner(find_dsh(getattr(config, "dsh_path", "")),
                                 api_key_fn=lambda: llm_api_key(self.config),
                                 launch=getattr(config, "dsh_launch", "hidden-console"),
@@ -785,6 +786,14 @@ class PetWindow(PetCanvas):
             check()
 
         QTimer.singleShot(180, begin)
+
+    def _web_tools(self):
+        """执行器的联网工具：config 里 ``agent_web`` 开了才有，默认关。"""
+        if not getattr(self.config, "agent_web", False):
+            return None
+        from ..brain.web import WebTools
+
+        return WebTools(self.config.search_provider, self.config.search_api_key, self.config.search_base_url)
 
     def task_workspace(self) -> str:
         from ..brain.tasks import default_workspace

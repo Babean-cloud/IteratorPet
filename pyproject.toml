@@ -15,6 +15,7 @@ dependencies = [
     "winrt-Windows.Storage.Streams>=4!10.0.28000.2705; sys_platform == 'win32'",
     "comtypes>=1.4; sys_platform == 'win32'",
     "rapidfuzz>=3", "pypinyin>=0.50",
+    "markitdown[pdf,docx,pptx,xlsx]>=0.1.5", "python-docx>=1.1",
 ]
 
 [project.optional-dependencies]

@@ -273,7 +273,7 @@ class ToolClient:
         self.script = list(script)
         self.seen: list[list[dict]] = []
 
-    def complete_tools(self, messages, tools):
+    def complete_tools(self, messages, tools, **_):
         self.seen.append([dict(m) for m in messages])
         self.tools = tools
         calls = self.script.pop(0)
