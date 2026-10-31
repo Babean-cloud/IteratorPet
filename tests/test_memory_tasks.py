@@ -12,7 +12,7 @@ from datetime import datetime
 import pytest
 
 from iterator_pet.brain.chatlog import ChatLog
-from iterator_pet.brain.context import Context
+from iterator_pet.brain.context import TURNS_KEEP, TURNS_MAX, Context
 from iterator_pet.brain.director import AUTO_GAP, CHAT_WINDOW, FOLD_BATCH, REFLECT_FULL, Director
 from iterator_pet.brain.executor import (
     AgentRunner, OutsideWorkspace, command_warnings, resolve_inside, tool_specs,
@@ -162,7 +162,44 @@ def test_chat_survives_many_autonomous_turns(tmp_path):
         _settle(director, sim)
     last = director.client.calls[-1]
     assert "下周三要考试" in last[1]["content"], "对话在记忆消息里，自主请求挤不掉"
-    assert len(last) <= 2 + 16 + 1
+    assert len(last) <= 2 + TURNS_MAX * 2 + 1
+
+
+def test_turns_only_append_then_trim_in_batch(tmp_path):
+    """缓存：turns 涨到上限才一次砍回，两次截断之间每次请求的前缀都是上一次的延伸。"""
+    ctx = Context(tmp_path / "c.json")
+    for i in range(TURNS_MAX):
+        ctx.add_turn(f"q{i}", f"a{i}")
+    assert len(ctx.turns) == TURNS_MAX * 2
+    before = list(ctx.turns)
+    ctx.add_turn("q-new", "a-new")                 # 超限：一次砍回 TURNS_KEEP 轮
+    assert len(ctx.turns) == TURNS_KEEP * 2
+    assert list(ctx.turns)[-2:] == [{"role": "user", "content": "q-new"},
+                                    {"role": "assistant", "content": "a-new"}]
+    ctx2 = Context(tmp_path / "c2.json")
+    for i in range(5):
+        ctx2.add_turn(f"q{i}", f"a{i}")
+        snapshot = list(ctx2.turns)
+        ctx2.add_turn("x", "y")
+        assert list(ctx2.turns)[:len(snapshot)] == snapshot, "未到上限时只追加，前缀不变"
+        ctx2.turns.pop(); ctx2.turns.pop()
+    assert before[0]["content"] == "q0"
+
+
+def test_memory_block_is_static_across_affinity_changes(tmp_path):
+    """好感度数值每次都变：必须在观察里，不能在记忆块里，否则每次改一下，后面的缓存全废。"""
+    sim = _sim()
+    clock = Clock()
+    director = _brain(tmp_path, {"say": None, "affinity": 0.1}, clock=clock)
+    blocks = []
+    for _ in range(2):
+        director.bump("drag")
+        clock.now += 300
+        director.tick(sim)
+        _settle(director, sim)
+        blocks.append(director.client.calls[-1][1]["content"])
+    assert blocks[0] == blocks[1] and "好感度" not in blocks[0]
+    assert "affinity" in json.loads(director.client.calls[-1][-1]["content"])
 
 
 def test_old_dialogue_folds_into_summary(tmp_path):

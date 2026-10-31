@@ -148,7 +148,8 @@ class Memory:
     def prompt_block(self, talkativeness: float = 0.5, chat_lines: list[str] | None = None,
                      pearl_lines: list[str] | None = None) -> str:
         """记忆，作为第二条 system 消息。档案/日记/摘要很少变；对话记录只在有人说话时变，
-        所以两次对话之间的自主请求前缀不变，照样吃缓存。"""
+        所以两次对话之间的自主请求前缀不变，照样吃缓存。
+        好感度数值每次都可能变，放在每轮观察里（``affinity``），不放这里。"""
         lines = ["【你的记忆】"]
         talk = ("少说话（有具体的事才开口，大约十来分钟一句）" if talkativeness < 0.34 else
                 ("话可以多一点（有东西可说时一两分钟一句也行）" if talkativeness > 0.66
@@ -156,7 +157,6 @@ class Memory:
         lines.append(f"这个人希望你：{talk}")
         if self.goal:
             lines.append(f"你现在的小目标：{self.goal}")
-        lines.append(f"对这个人的好感度：{self.affinity:+.2f}（-1 厌烦 … +1 亲近）")
         if self.profile:
             lines.append("你知道的关于这个人的事：" + "；".join(self.profile))
         else:

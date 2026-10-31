@@ -288,3 +288,39 @@ def test_agent_event_only_says_and_wakes_errands(tmp_path):
     assert sim.dialogue.text == "……你的 Claude 跑完了。"
     assert not director.memory.profile and [e["goal"] for e in errands.items] == ["等 Claude Code 跑完"], \
         "通知触发的那次回复进不了记忆 / 提醒 / 心事"
+
+
+def test_observation_slimming_positions_and_unchanged_lists(tmp_path):
+    from iterator_pet.brain.reminders import Reminders
+
+    director = Director(FakeClient({"say": None}), idle_fn=lambda: 0.0, context=Context(None),
+                        memory=Memory(tmp_path / "m.json"), reminders=Reminders(tmp_path / "r.json"),
+                        wall=lambda: datetime(2026, 10, 31, 14, 0))
+    director.reminders.add_spec({"text": "喝水", "in_min": 30})
+    sim = SimulationState(WIDE)
+    first = director.observe(sim, "idle")
+    assert "you" not in first and "cursor" not in first, "自主观察不带坐标"
+    assert first["reminders"] and "reminders_unchanged" not in first
+    again = director.observe(sim, "idle")
+    assert "reminders" not in again and again["reminders_unchanged"] == 1
+    asked = director.observe(sim, "chat", "我有什么提醒")
+    assert asked["reminders"] and "you" in asked and "cursor" in asked, "用户问话：给全"
+    assert "affinity" in again
+
+
+def test_autonomous_say_right_after_speaking_is_dropped_in_code():
+    now = {"t": 1000.0}
+    director = Director(FakeClient({}), clock=lambda: now["t"], idle_fn=lambda: 0.0,
+                        context=Context(None), talkativeness=1.0,
+                        wall=lambda: datetime(2026, 10, 31, 14, 0))
+    sim = SimulationState(WIDE)
+    sim.pool_lines = False
+    assert director._say(sim, "……第一句。", direct=False)
+    sim.cancel_dialogue()
+    now["t"] += 30                       # 话量拉满的 20 s 间隔早过了，但硬下限 60 s 还没到
+    assert not director._say(sim, "……第二句。", direct=False)
+    assert not sim.dialogue.text and "没说出口" in director.context.activity[-1]
+    assert director._say(sim, "……用户找它。", direct=True), "用户找它时不受限"
+    sim.cancel_dialogue()
+    now["t"] += 61
+    assert director._say(sim, "……隔够了。", direct=False)

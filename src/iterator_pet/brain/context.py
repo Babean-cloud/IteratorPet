@@ -17,14 +17,15 @@ from pathlib import Path
 
 from .mindlog import MindLog
 
-TURNS_KEEP = 8                 # 最近几轮（一轮 = 一问一答）
+TURNS_KEEP = 4                 # 批量截断后留几轮（一轮 = 一问一答）
+TURNS_MAX = 12                 # 涨到几轮时一次砍回 TURNS_KEEP：前缀在两次截断之间只追加，缓存才吃得上
 ACTIVITY_KEEP = 80
 
 
 class Context:
     def __init__(self, path: Path | str | None = None):
         self.path = Path(path) if path is not None else None
-        self.turns: deque[dict] = deque(maxlen=TURNS_KEEP * 2)
+        self.turns: deque[dict] = deque()
         self.activity: deque[str] = deque(maxlen=ACTIVITY_KEEP)
         self.since_reflect = 0
         self.active_seconds = 0.0
@@ -55,6 +56,7 @@ class Context:
         if turns and turns[0]["role"] == "assistant":
             turns = turns[1:]                      # 必须以 user 开头，一问一答
         self.turns.extend(turns)
+        self._trim_turns()
         self.activity.extend(str(a) for a in raw.get("activity") or [])
         self.mood = str(raw.get("mood") or self.mood)[:12]
         self.thought = str(raw.get("thought") or "")[:120]
@@ -109,3 +111,10 @@ class Context:
     def add_turn(self, user: str, assistant: str) -> None:
         self.turns.append({"role": "user", "content": user})
         self.turns.append({"role": "assistant", "content": assistant})
+        self._trim_turns()
+
+    def _trim_turns(self) -> None:
+        """只追加、批量截断：不再每轮挤掉最老的一轮（那样每次请求的前缀都不同，整段缓存全废）。"""
+        if len(self.turns) > TURNS_MAX * 2:
+            for _ in range(len(self.turns) - TURNS_KEEP * 2):
+                self.turns.popleft()

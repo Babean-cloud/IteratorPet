@@ -2,7 +2,7 @@
 
 预算（2026-10 用户放宽到 1000 万 token / 天）花在"更聪明"上，而不是"更多话"：
 * 记忆分四层，免得"聊着聊着就忘了"（原来只留 12 轮，自主请求十几秒一次，几分钟就把对话挤没了）：
-  1. 最近 ``TURNS_KEEP`` 轮原始请求/回复（``context.py``，存盘），模型带 ``thought`` 维持连贯；
+  1. 最近几轮（涨到 ``TURNS_MAX`` 轮时批量砍回 ``TURNS_KEEP`` 轮）原始请求/回复（``context.py``，存盘），模型带 ``thought`` 维持连贯；
   2. 最近 ``CHAT_WINDOW`` 句对话单独成段放进记忆消息——自主请求再多也挤不掉；
      滑出去的旧对话攒够 ``FOLD_BATCH`` 句，就附在下一次请求里让模型顺手并进"最近经历"摘要；
   3. 档案 / 日记 / 小目标（``memory.py``），反思时整理；
@@ -33,6 +33,7 @@ from .planner import SAY_MAX_CHARS, Planner
 from .prompt import EVENT_TEXT, system_prompt
 
 URGENT_GAP = 6.0           # 紧急事件 / 用户说话：两次请求至少隔几秒
+SAY_FLOOR = 60.0           # 自主开口的硬下限（秒）：话量再高、被回应得再多，两次自主开口也不会比这更近
 AUTO_GAP = 18.0            # 自主请求之间至少隔几秒
 ERROR_BACKOFF = 30.0
 PERCEIVE_EVERY = 2.0
@@ -59,6 +60,9 @@ SCREEN_REFUSAL = re.compile(r"(不要|不用|别|无需|不必).{0,6}(看|读|�
 # 这些原因触发的话不受话量闸门限制（用户找它 / 动了它）
 DIRECT_REASONS = ("chat", "drag", "angry", "talk", "back", "remind", "battery", "task_done",
                   "pearl", "arrive", "agent")
+
+# 这些原因的观察里才带 you / cursor 的坐标（别的时候坐标几乎每次都变，白占 token）
+POSITION_REASONS = ("chat", "drag", "angry", "talk", "arrive", "back")
 
 SCORES = {"drag": 10.0, "angry": 10.0, "arrive": 10.0, "agent": 8.0, "back": 6.0, "task_done": 6.0,
           "talk": 4.0, "battery": 4.0, "long_session": 3.0, "late": 3.0, "relation_up": 3.0,
@@ -182,6 +186,7 @@ class Director:
         self._last_perceive = -1e9
         self._last_save = now
         self._last_auto_say = -1e9
+        self._sent_static: dict = {}               # 上次发给模型的提醒 / 心事（观察瘦身）
         self.salience = 0.0
         self.reason: str | None = None
         self.desire = 0.0
@@ -318,8 +323,11 @@ class Director:
         if not isinstance(text, str) or not text.strip():
             return False
         now = self.clock()
-        gap = say_gap(self.talkativeness) * self.remarks.scale
+        gap = max(SAY_FLOOR, say_gap(self.talkativeness) * self.remarks.scale)
         if not direct and (self.quiet or now - self._last_auto_say < gap):
+            # 刚开过口：写在代码里丢掉（plan 里排的话也走这里），不靠提示词约束
+            if not self.quiet:
+                self.log(f"（刚说过话，这句没说出口：{text.strip()[:30]}）")
             return False
         text = text.strip()[:SAY_MAX_CHARS]
         if sim.say(text):
@@ -707,16 +715,24 @@ class Director:
         return {"x": round((point[0] - x) / max(1.0, w), 2),
                 "y": round((point[1] - y) / max(1.0, h), 2)}
 
+    def _slim(self, obs: dict, key: str, value, count: int, force: bool) -> None:
+        """没变的列表只给个数（``<key>_unchanged``），变了或者用户在问话才给全文。"""
+        if not force and self._sent_static.get(key) == value:
+            obs[f"{key}_unchanged"] = count
+            return
+        self._sent_static[key] = value
+        obs[key] = value
+
     def observe(self, sim, reason: str, user_text: str | None = None) -> dict:
         obs: dict = {"event": EVENT_TEXT.get(reason, reason)}
         if user_text:
             obs["user_said"] = user_text
         if self.task_workspace:
             obs["task_workspace"] = self.task_workspace
+        if reason in POSITION_REASONS:
+            obs.update({"you": self._norm(sim, sim.creature.chunk0), "cursor": self._norm(sim, sim.cursor)})
         obs.update({
             "time": self.wall().strftime("%H:%M"),
-            "you": self._norm(sim, sim.creature.chunk0),
-            "cursor": self._norm(sim, sim.cursor),
             "temper": round(float(sim.temper.value), 2),
             "territory": (sim.territory or {}).get("side"),
             "plan_left": None if self.planner.idle else self.planner.label(),
@@ -730,11 +746,16 @@ class Director:
         if system.get("battery") is not None and not system.get("charging") \
                 and system["battery"] <= 30:
             obs["battery"] = f"{system['battery']}%，没在充电"
+        # 提醒 / 心事：和上次发给模型的一样就只给个数（用户问话时照旧给全）
         if self.reminders is not None and self.reminders.items:
-            obs["reminders"] = self.reminders.describe()
+            self._slim(obs, "reminders", self.reminders.describe(), len(self.reminders.items), bool(user_text))
+        elif self._sent_static.pop("reminders", None) is not None:
+            obs["reminders"] = "已经没有了"
         if self.errands is not None and self.errands.items:
-            obs["errands"] = [e["goal"] + (f"（你的打算：{e['notes'][:60]}）" if e.get("notes") else "")
-                              for e in self.errands.items]
+            self._slim(obs, "errands", [e["goal"] + (f"（你的打算：{e['notes'][:60]}）" if e.get("notes") else "")
+                                        for e in self.errands.items], len(self.errands.items), bool(user_text))
+        elif self._sent_static.pop("errands", None) is not None:
+            obs["errands"] = "已经没有了"
         if self.perception is not None and self.perception.level != "off":
             obs["screen"] = self.perception.describe()
             if hasattr(self.perception, "screen_delta"):
@@ -754,6 +775,8 @@ class Director:
         from .relation import energy_word
 
         obs["relation"] = self.relation.brief()
+        if self.memory is not None:
+            obs["affinity"] = f"{self.memory.affinity:+.2f}（-1 厌烦 … +1 亲近）"
         obs["energy"] = f"{self.context.energy:.2f}（{energy_word(self.context.energy)}）"
         quiet_for = self.clock() - self._last_auto_say
         if quiet_for < 1e8:

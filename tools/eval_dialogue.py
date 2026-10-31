@@ -96,10 +96,19 @@ def run_one(sc: dict, client, tmp: Path) -> dict:
     for who, text in sc.get("history", []):
         chatlog.add(who, text)
         now["t"] += 30.0
+    filler = sc.get("filler") or {}
+    for i in range(int(filler.get("history", 0))):         # 合成的闲聊，撑到真实长度
+        chatlog.add("user" if i % 2 == 0 else "pet", f"（合成对话第{i}句）" + "闲聊内容" * 3)
+        now["t"] += 30.0
     relay = Relay(client)
     director = Director(relay, clock=lambda: now["t"], idle_fn=lambda: float(sc.get("idle_s", 5)),
                         wall=lambda: datetime(2026, 11, 1, hour, minute),
                         memory=memory, chatlog=chatlog, perception=Eyes(sc.get("screen")))
+    context = director.context
+    for i in range(int(filler.get("turns", 0))):           # 最近 N 轮原始请求/回复
+        context.add_turn(json.dumps({"event": "屏幕有变化", "time": "15:%02d" % (i * 5 % 60), "relation": "认得"},
+                                    ensure_ascii=False),
+                         json.dumps({"thought": f"（合成念头{i}）", "say": None, "mood": "平静"}, ensure_ascii=False))
     if sc.get("last_spoke_min") is not None:
         director._last_auto_say = now["t"] - 60.0 * sc["last_spoke_min"]
     sim = SimulationState(BOUNDS, warmup=0, character=sc.get("character", "pebbles"))
