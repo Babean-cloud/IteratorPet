@@ -838,10 +838,14 @@ class Director:
                 recall += self.pearls.search(user_text)
             if recall:
                 obs["recall"] = recall
+        if reason == "chat" and user_text and self.memory is not None:
+            candidates = self.memory.place_candidates(user_text)
+            if candidates:
+                obs["place_candidates"] = candidates
         user_msg = {"role": "user", "content": json.dumps(obs, ensure_ascii=False)}
         # 历史里存去掉大段文字的观察：屏幕文字 / 活动日志每轮都不一样，留着只会白花 token
         compact = {k: v for k, v in obs.items()
-                   if k not in ("screen_text", "screen_new", "activity", "task_result", "fold", "recall", "pearl")}
+                   if k not in ("screen_text", "screen_new", "activity", "task_result", "fold", "recall", "pearl", "place_candidates")}
         if "pearl" in obs:
             compact["pearl"] = {k: obs["pearl"][k] for k in ("title", "kind")}
         brief = json.dumps(compact, ensure_ascii=False)
@@ -990,13 +994,25 @@ class Director:
             goal = task.get("goal")
             mode = task.get("mode")
             if isinstance(goal, str) and goal.strip() and mode in ("read-only", "workspace-write"):
+                workspace = task.get("workspace")
+                if self.memory is not None:          # 填的是地点簿里的名字：本地换算成路径
+                    workspace = self.memory.resolve_place(workspace) or workspace
                 self.on_task_request({"goal": goal.strip()[:400], "mode": mode,
-                                      "workspace": task.get("workspace")}, user_text)
+                                      "workspace": workspace}, user_text)
 
         memory = self.memory
         if memory is None:
             return
         changed = False
+        learn = action.get("learn")
+        if reason == "chat" and user_text and isinstance(learn, dict):
+            # 只在用户亲口说话的那一轮收：屏幕上看到的、别的来源的都不记；路径必须真实存在
+            if memory.add_place(learn.get("place"), learn.get("path")):
+                self.log(f"记下一个地点：{learn.get('place')}")
+                changed = True
+            if memory.add_alias(learn.get("alias"), learn.get("meaning")):
+                self.log(f"记下一个别名：{learn.get('alias')}")
+                changed = True
         remember = action.get("remember")
         for fact in (remember if isinstance(remember, list) else [remember]):
             if isinstance(fact, str):

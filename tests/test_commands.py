@@ -142,3 +142,22 @@ def test_execute_local_commands(tmp_path):
     pet.errands.add("等下载完")
     assert "心事：等下载完" in execute(pet, "/status")[1]
     assert execute(pet, "/unwatch")[1] == "✓ 放下了 1 件心事。" and not pet.errands.items
+
+
+def test_places_and_forget_commands(tmp_path):
+    from types import SimpleNamespace
+
+    from iterator_pet.brain.memory import Memory
+    from iterator_pet.platform.quick_bar import execute
+
+    folder = tmp_path / "MM"
+    folder.mkdir()
+    memory = Memory(tmp_path / "m.json")
+    pet = SimpleNamespace(memory=memory)
+    assert "还没有" in execute(pet, "/places")[1]
+    memory.add_place("MM课", str(folder))
+    memory.add_alias("MM", "MM课")
+    listing = execute(pet, "/places")[1]
+    assert "MM课 →" in listing and "MM = MM课" in listing
+    assert execute(pet, "/forget mm")[1].startswith("✓") and not memory.aliases
+    assert execute(pet, "/forget 不存在")[1].startswith("✗")

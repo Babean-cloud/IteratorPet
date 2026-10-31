@@ -185,7 +185,7 @@ class AIPanel(FramedWindow):
         affinity_row.addWidget(self.affinity_value)
         self.mem.add("affinity", "好感度", affinity)
         for name, key in (("goal", "小目标"), ("reflect", "反思"), ("diary", "日记"),
-                          ("summary", "最近经历"), ("facts", "记住的事")):
+                          ("summary", "最近经历"), ("facts", "记住的事"), ("places", "地点簿")):
             self.mem.add(name, key)
         self.mem_group = _group("记忆", self.mem)
         page.addWidget(self.mem_group)
@@ -333,6 +333,11 @@ class AIPanel(FramedWindow):
         self.mem.show_text("facts", "\n".join(f"· {fact}" for fact in memory.profile[-6:])
                            + (f"\n（共 {len(memory.profile)} 条）" if len(memory.profile) > 6 else "")
                            or None)
+        spots = [f"{n} → {e['path']}" for n, e in memory.places.items()] \
+            + [f"{n} = {e['meaning']}" for n, e in memory.aliases.items()]
+        self.mem.show_text("places", ("\n".join(f"· {x}" for x in spots[:6])
+                                      + (f"\n（共 {len(spots)} 条）" if len(spots) > 6 else "")
+                                      + "\n删除：/forget 名字") if spots else "还没有：用户确认过的地点和缩写才会记在这里")
         self.reflect.setEnabled(director is not None and not director.status()["reflect_pending"])
         self.pearl_list.refresh()
         self.errand_list.refresh()

@@ -178,6 +178,20 @@ def _do_give(pet, command) -> tuple[bool, str]:
     return True, f"✓「{pearl['title'][:20]}」转给{receiver}了，下次切到{receiver}时会读。"
 
 
+def _do_places(pet, command) -> tuple[bool, str]:
+    memory = pet.memory
+    lines = [f"{name} → {e['path']}　（{e.get('confirmed', '')}）" for name, e in memory.places.items()]
+    lines += [f"{name} = {e['meaning']}　（{e.get('confirmed', '')}）" for name, e in memory.aliases.items()]
+    return True, "\n".join(lines) if lines else "还没有记下地点或别名：聊到的时候它会先问你，你确认了才记。"
+
+
+def _do_forget(pet, command) -> tuple[bool, str]:
+    if not pet.memory.forget_place(command.text):
+        return True, f"✗ 没有叫「{command.text}」的地点或别名。/places 看全部。"
+    pet.memory.save()
+    return True, f"✓ 忘掉「{command.text}」了。"
+
+
 def _do_char(pet, command) -> tuple[bool, str]:
     target = cmd.character_of(command.text) if command.text else (
         "past_moon" if pet.character == "pebbles" else "pebbles")

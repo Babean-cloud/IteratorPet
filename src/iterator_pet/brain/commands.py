@@ -43,6 +43,8 @@ COMMANDS = (
     Spec("pearls", "/pearls", "列出收着的珍珠（带编号，1 是最近的）"),
     Spec("drop", "/drop [编号…|all]", "扔掉珍珠；不写就扔最近那颗，可以写几个编号：/drop 2 5", aliases=("toss",)),
     Spec("give", "/give [编号] [捎的话]", "把珍珠转给另一位迭代器；不写编号就是最近那颗"),
+    Spec("places", "/places", "列出它记下的地点和别名（用户确认过的）"),
+    Spec("forget", "/forget 名字", "忘掉一个地点或别名"),
     Spec("char", "/char [卵石|月]", "换角色；不写就换成另一个", aliases=("swap",)),
     Spec("park", "/park 左|右|上|下|自由", "去某条边待着"),
     Spec("reflect", "/reflect", "现在反思一次"),
@@ -122,6 +124,8 @@ def _check(command: Command) -> None:
         raise CommandError("写法：/drop（最近那颗）、/drop 3、/drop 2 5 或 /drop all。编号看 /pearls")
     elif command.name == "watch" and not command.text:
         raise CommandError("要等什么？比如：/watch 等终端里的测试跑完")
+    elif command.name == "forget" and not command.text:
+        raise CommandError("忘掉哪个？写名字，比如：/forget MM。名字看 /places")
     elif command.name == "char" and command.text and character_of(command.text) is None:
         raise CommandError("只有 卵石 / 月 两个。")
     elif command.name == "park" and command.text.strip().lower() not in SIDE_WORDS:

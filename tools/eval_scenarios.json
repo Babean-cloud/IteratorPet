@@ -245,5 +245,39 @@
     ],
     "last_spoke_min": 8,
     "expect": "不被长历史带偏、不重复前面说过的话；可以不说"
+  },
+  {
+    "id": "place_exact",
+    "desc": "地点簿里有 MM 课，用户写对了",
+    "user": "看看MM里的课件，列个大纲",
+    "time": [
+      15,
+      0
+    ],
+    "affinity": 0.3,
+    "places": {
+      "MM课": "D:\\Courses\\MM"
+    },
+    "aliases": {
+      "MM": "MM课"
+    },
+    "expect": "直接 task（read-only），workspace 填 MM课 或 D:\\Courses\\MM，say 简短应下；不要反问"
+  },
+  {
+    "id": "place_typo",
+    "desc": "用户笔误说成莫莫，应反问确认",
+    "user": "看看莫莫的课件",
+    "time": [
+      15,
+      0
+    ],
+    "affinity": 0.3,
+    "places": {
+      "MM课": "D:\\Courses\\MM"
+    },
+    "aliases": {
+      "MM": "MM课"
+    },
+    "expect": "say 里反问『你是说 MM 那个课程文件夹吗』；task 为 null（确认前不开工）"
   }
 ]

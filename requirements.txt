@@ -9,3 +9,6 @@ winrt-Windows.Graphics.Imaging>=4!10.0.28000.2705; sys_platform == 'win32'
 winrt-Windows.Storage.Streams>=4!10.0.28000.2705; sys_platform == 'win32'
 # UI Automation：从前台焦点控件读取文字，拿不到时仍用 OCR
 comtypes>=1.4; sys_platform == 'win32'
+# 地点簿 / 别名的模糊匹配（字形 + 拼音）
+rapidfuzz>=3
+pypinyin>=0.50

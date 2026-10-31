@@ -5,6 +5,8 @@
   超过 ``PROFILE_SOFT_CAP`` 条时在下一次请求里让模型顺手 ``profile_rewrite`` 压缩。
 * **日记** ``diary``：反思时写，只把最近几条带进 prompt。
 * **关系** ``affinity``：-1..1 的好感度，模型每次可以微调 ±0.1。
+* **地点簿** ``places``（名字 → 文件夹路径）和 **别名** ``aliases``（缩写 → 指代）：只有用户确认过才记，
+  各带来源和确认时间；平时不进 prompt，用户的话里提到时由 ``places.match`` 本地匹配出候选再给模型。
 * **最近经历** ``summary``：滑出 prompt 里对话窗口的旧对话，攒够一批就让模型并进这段摘要
   （``summarized_ts`` = 已经并进去的最后一条对话的时间），见 ``director.FOLD_BATCH``。
 """
@@ -12,9 +14,11 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 
+PLACES_CAP = 40
 PROFILE_SOFT_CAP = 24
 PROFILE_HARD_CAP = 40
 DIARY_KEEP = 300
@@ -40,6 +44,8 @@ class Memory:
         self.summarized_ts = 0.0
         self.last_diary_ts = 0.0
         self.events_since_diary = 0
+        self.places: dict[str, dict] = {}      # 名字 → {path, source, confirmed}
+        self.aliases: dict[str, dict] = {}     # 缩写 → {meaning, source, confirmed}
         self.load()
 
     # -- 文件 -----------------------------------------------------------------
@@ -54,6 +60,10 @@ class Memory:
         self.diary = [d for d in raw.get("diary") or []
                       if isinstance(d, dict) and d.get("text")]
         self.goal = str(raw.get("goal") or "")[:80]
+        for field, key in (("places", "path"), ("aliases", "meaning")):
+            table = raw.get(field)
+            setattr(self, field, {str(n)[:30]: e for n, e in table.items()
+                                  if isinstance(e, dict) and e.get(key)} if isinstance(table, dict) else {})
         self.summary = str(raw.get("summary") or "")[:SUMMARY_MAX]
         try:
             self.affinity = max(-1.0, min(1.0, float(raw.get("affinity", 0.0))))
@@ -67,6 +77,8 @@ class Memory:
             "profile": self.profile,
             "affinity": round(self.affinity, 3),
             "goal": self.goal,
+            "places": self.places,
+            "aliases": self.aliases,
             "summary": self.summary,
             "summarized_ts": self.summarized_ts,
             "last_diary_ts": self.last_diary_ts,
@@ -81,6 +93,7 @@ class Memory:
 
     def clear(self) -> None:
         self.profile, self.diary, self.affinity, self.goal = [], [], 0.0, ""
+        self.places, self.aliases = {}, {}
         self.summary, self.summarized_ts = "", 0.0
         self.last_diary_ts = 0.0
         self.save()
@@ -101,6 +114,63 @@ class Memory:
         self.profile.append(fact)
         del self.profile[:-PROFILE_HARD_CAP]
         return True
+
+    # -- 地点簿 / 别名（用户确认过才记） --------------------------------------------------
+    def add_place(self, name, path, source: str = "对话确认") -> bool:
+        """路径必须是本机真实存在的文件夹——模型凭空猜的路径记不进来。"""
+        name = (name or "").strip()[:30] if isinstance(name, str) else ""
+        path = os.path.expandvars(os.path.expanduser(path.strip().strip('"'))) if isinstance(path, str) else ""
+        if not name or not path or not os.path.isdir(path):
+            return False
+        path = os.path.abspath(path)
+        if name not in self.places and len(self.places) >= PLACES_CAP:
+            return False
+        if self.places.get(name, {}).get("path") == path:
+            return False
+        self.places[name] = {"path": path, "source": source[:20], "confirmed": self.now().strftime("%Y-%m-%d")}
+        return True
+
+    def add_alias(self, name, meaning, source: str = "对话确认") -> bool:
+        name = (name or "").strip()[:30] if isinstance(name, str) else ""
+        meaning = (meaning or "").strip()[:80] if isinstance(meaning, str) else ""
+        if not name or not meaning or self.aliases.get(name, {}).get("meaning") == meaning:
+            return False
+        if name not in self.aliases and len(self.aliases) >= PLACES_CAP:
+            return False
+        self.aliases[name] = {"meaning": meaning, "source": source[:20],
+                              "confirmed": self.now().strftime("%Y-%m-%d")}
+        return True
+
+    def forget_place(self, name: str) -> bool:
+        """按名字（不分大小写）删地点或别名。"""
+        found = False
+        for table in (self.places, self.aliases):
+            for key in [k for k in table if k.lower() == (name or "").strip().lower()]:
+                del table[key]
+                found = True
+        return found
+
+    def place_candidates(self, text: str) -> list[dict]:
+        if not (self.places or self.aliases) or not text:
+            return []
+        from .places import match
+
+        return match(text, self.places, self.aliases)
+
+    def resolve_place(self, name) -> str | None:
+        """任务的 workspace 填的是地点簿里的名字（或指向某地点的别名）→ 路径；不是就 None。"""
+        key = (name or "").strip().lower() if isinstance(name, str) else ""
+        for table in (self.places,):
+            for k, e in table.items():
+                if k.lower() == key:
+                    return e["path"]
+        for k, e in self.aliases.items():
+            if k.lower() == key:
+                target = e["meaning"].strip().lower()
+                for pk, pe in self.places.items():
+                    if pk.lower() == target:
+                        return pe["path"]
+        return None
 
     def rewrite_profile(self, facts) -> bool:
         if not isinstance(facts, list):

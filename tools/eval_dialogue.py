@@ -90,6 +90,8 @@ def run_one(sc: dict, client, tmp: Path) -> dict:
     now = {"t": 10_000.0}
     memory = Memory(tmp / "memory.json")
     memory.profile = list(sc.get("profile", []))
+    memory.places = {n: {"path": p, "source": "合成", "confirmed": "2026-10-01"} for n, p in sc.get("places", {}).items()}
+    memory.aliases = {n: {"meaning": m, "source": "合成", "confirmed": "2026-10-01"} for n, m in sc.get("aliases", {}).items()}
     memory.affinity = float(sc.get("affinity", 0.2))
     memory.diary = [{"date": "2026-10-31", "text": d} for d in sc.get("diary", [])]
     chatlog = ChatLog(tmp / "chat.jsonl", now=lambda: now["t"])
@@ -165,7 +167,7 @@ def main() -> None:
                   f"  token {u.get('prompt_tokens', '-')}/{u.get('completion_tokens', '-')}"
                   f"  命中 {u.get('prompt_cache_hit_tokens', '-')}  {res['seconds'] or ''}s")
             if not args.dry:
-                for key in ("say", "thought", "mood", "plan", "remember", "remind", "errand", "task", "error"):
+                for key in ("say", "thought", "mood", "plan", "remember", "learn", "remind", "errand", "task", "error"):
                     if reply.get(key) not in (None, "", []):
                         print(f"   {key}: {json.dumps(reply[key], ensure_ascii=False)[:200]}")
                 print(f"   期望: {res['expect']}")
