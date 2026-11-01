@@ -275,7 +275,7 @@ class Bridge:
         if method == "initialize":
             result = {"protocolVersion": (request.get("params") or {}).get("protocolVersion") or MCP_VERSION,
                       "capabilities": {"tools": {}},
-                      "serverInfo": {"name": "iterator-pet", "version": "0.4.0"}}
+                      "serverInfo": {"name": "iterator-pet", "version": "0.5.0"}}
         elif method == "ping":
             result = {}
         elif method == "tools/list":

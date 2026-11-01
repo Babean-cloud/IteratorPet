@@ -55,8 +55,9 @@
 
 ### 发布版
 1. 解压到任意位置（别放进需要管理员权限的目录），双击 `启动.exe`。
-2. 第一次运行会在 Steam 库里找 Rain World，找不到会请你选游戏根目录（里面有 `RainWorld.exe` 和 `RainWorld_Data`）。
-   它会从游戏里提取图元和音效到本机缓存，大约需要几十秒，之后每次直接启动。
+2. 第一次运行会在 Steam 库和注册表里找 Rain World，从游戏里提取图元和音效到本机缓存，之后每次直接启动。
+   找不到游戏也不会弹窗，会先用内置图元跑起来（没有原版音效）。想手动指定游戏目录：运行 `启动.exe --setup`，
+   选游戏根目录（里面有 `RainWorld.exe` 和 `RainWorld_Data`）。
 3. 想让它说话、读屏幕：右键人偶 →「AI」→「API Key…」，填入 [DeepSeek](https://platform.deepseek.com/) 的 API Key，
    再勾上同一菜单里的「AI 驱动（DeepSeek）」。
 
@@ -263,8 +264,12 @@ Tab 补全，↑↓ 翻历史，Esc 收起，Ctrl+Enter 转到完整对话窗口
 
 ## 常见问题
 
-**第一次启动说找不到游戏？**
-手动选 Rain World 的根目录，就是有 `RainWorld.exe` 的那一层；或者先设环境变量 `RAINWORLD_DIR` 再启动。
+**找不到游戏 / 人偶看起来不对、没有原版音效？**
+运行 `启动.exe --setup`，选 Rain World 的根目录（有 `RainWorld.exe` 的那一层）；或者先设环境变量 `RAINWORLD_DIR` 再启动。
+换了电脑、重装了游戏、缓存坏了，也用 `--setup` 重来一遍。
+
+**托盘里找不到图标？**
+Windows 11 默认把新图标折进任务栏的 `^` 里。右键桌面上的迭代器本身也有同样的菜单；任何时候都能按 `Ctrl+Alt+Q` 退出。
 
 **它一直不说话？**
 看看「AI 状态…」面板：

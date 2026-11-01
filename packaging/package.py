@@ -144,6 +144,18 @@ def main() -> int:
     if not exe.is_file():
         print(f"先跑 packaging/build.py（找不到 {exe}）")
         return 2
+    # 先在包里自检：构建中途失败（比如 exe 正被占用）会留下一个缺文件的 dist，照样能打成 zip（2026-11-02 真遇到过）
+    import subprocess
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        report = Path(tmp) / "selftest.txt"
+        code = subprocess.run([str(exe), "--selftest", str(report)], timeout=120).returncode
+        text = report.read_text(encoding="utf-8") if report.is_file() else "（没有生成自检结果）"
+    if code != 0:
+        print(f"[pack] 自检没过，不打包：\n{text}")
+        return 3
+    print("[pack] 自检通过")
 
     stage = out_dir / FOLDER
     if stage.exists():

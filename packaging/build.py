@@ -44,7 +44,7 @@ EXCLUDES = (                             # lxml 不能排除：python-docx（读
     "PyQt5", "PyQt6", "PySide2", "tkinter", "IPython", "jedi",
 )
 
-# 删掉的 Qt 运行时：我们只用 Core/Gui/Widgets + Multimedia（0.4.0 起的音效，QSoundEffect）。
+# 删掉的 Qt 运行时：我们只用 Core/Gui/Widgets + Multimedia（音效：0.4.0 用 QSoundEffect，0.5.0 起自己混音走 QAudioSink）。
 # Qt6Network.dll 不能删：Qt6Multimedia.dll 链接了它，删了声音模块整个导入失败。
 QT_FILES = (
     "opengl32sw.dll", "Qt6Quick.dll", "Qt6QuickWidgets.dll", "Qt6Qml.dll",
