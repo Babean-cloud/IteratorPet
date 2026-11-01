@@ -225,8 +225,18 @@ class OverseerLayer:
             self._age += 1
             if stamp != self._holo_key:                  # 同一块内容里选项 / 高亮变了：原地重画，不重放出现效果
                 self._holo, self._holo_key = self._build(content, hover), stamp
+                self._resize_rect(self._holo.image, size)
             if self._age >= STRONG_TICKS and not self.panel_hovered:
                 self._scroll_ticks += 1
+
+    def _resize_rect(self, image, size) -> None:
+        """重画后面板变高 / 变宽（比如勾了联网多一行说明）：左上角不动，矩形跟着新图走，
+        按钮命中按新位置算（用户实测：按钮被挤下去了，鼠标还得点在老位置）。出了屏幕底就整体上移。"""
+        rect = self._rect
+        if rect is None or (rect.width(), rect.height()) == (image.width(), image.height()):
+            return
+        top = min(rect.y(), max(0.0, size[1] - image.height() - 16.0))
+        self._rect = QRectF(rect.x(), top, image.width(), image.height())
 
     def _scroll_offset(self) -> float:
         """长文滚到哪了（像素）：先停 SCROLL_DELAY 再按字/秒匀速走，停在底。"""

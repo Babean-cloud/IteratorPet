@@ -82,3 +82,24 @@ def test_color_follows_character():
     pebbles = layer._graphics.color
     layer.step(_state(PAST_MOON), 1.0, SIZE)
     assert layer._graphics.color != pebbles
+
+
+def test_buttons_follow_the_panel_when_a_redraw_makes_it_taller():
+    """勾了联网多一行说明：面板变高、按钮被挤下去，命中区域也要跟着下去（用户实测）。"""
+    from iterator_pet.rendering.hologram import STRONG_TICKS, Button, Line, button_rects
+
+    QGuiApplication.instance() or QGuiApplication([])
+    layer = OverseerLayer()
+    state = _state()
+    buttons = (Button("cancel", "取消", "cross"), Button("start", "开始", "check"))
+    layer.show(1, [Line("让它去做", "title")], buttons=buttons)
+    for _ in range(60 + STRONG_TICKS):
+        layer.step(state, 1.0, SIZE)
+    before = layer._rect.height()
+    layer.show(1, [Line("让它去做", "title"), Line("联网：这个任务可以上网查资料"), Line("多一行说明")],
+               buttons=buttons, revision=1)
+    layer.step(state, 1.0, SIZE)
+    rect = layer._rect
+    assert rect.height() > before
+    start = button_rects(int(rect.width()), int(rect.height()), buttons)[1].center()
+    assert layer.button_at((rect.x() + start.x(), rect.y() + start.y())) == "start"
