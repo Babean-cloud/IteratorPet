@@ -44,7 +44,9 @@ MODES = {"read-only": "只读", "workspace-write": "可写任务文件夹", "dsh
 DEFAULT_TIMEOUT = 30 * 60.0
 APPROVAL_TIMEOUT = 10 * 60.0
 COMMAND_TIMEOUT = 120.0
-MAX_STEPS = 30
+MAX_STEPS = 60                  # 查资料 / 看文件的轮数；只写文件、导出的轮不算（见 WRITE_TOOLS）
+WRITE_ROUNDS = 12               # 另给写文件的轮数上限，也是步数用完后“先把写好的存下来”的余量
+WRITE_TOOLS = frozenset({"write_file", "export_document"})
 TURN_TOKENS = 6000            # 每一轮最多输出多少 token：write_file 要装得下一份讲义
 OUTPUT_LIMIT = 6000
 READ_LIMIT = 20000
@@ -300,10 +302,14 @@ class AgentRunner:
         deadline = time.monotonic() + self.timeout
         seen: dict[str, int] = {}                     # 只读 / 联网调用的重复检测：key → 第一次出现的步数
         try:
-            for step in range(MAX_STEPS):
+            step, reminded = 0, False
+            for _ in range(MAX_STEPS + WRITE_ROUNDS):
                 if task.finished:
                     return
-                if step == MAX_STEPS - 5:                 # 快到步数上限了：提醒它收尾，别查个没完
+                if step >= MAX_STEPS:
+                    break
+                if step >= MAX_STEPS - 5 and not reminded:   # 快到步数上限了：提醒它收尾，别查个没完
+                    reminded = True
                     messages.append({"role": "user", "content": (
                         "（系统提示：步数只剩 5 步。资料够了就别再查，现在动笔写出结果，然后调用 finish。）")})
                 if time.monotonic() > deadline:
@@ -317,6 +323,9 @@ class AgentRunner:
                 if not calls:
                     self._finish(task, message.get("content") or "")
                     return
+                # 只写 / 导出的一轮不占步数：步数是给“查资料、看文件”的，别让讲义写到一半被掐断
+                if not all((c.get("function") or {}).get("name") in WRITE_TOOLS for c in calls):
+                    step += 1
                 for call in calls:
                     name = (call.get("function") or {}).get("name", "")
                     try:
@@ -338,6 +347,8 @@ class AgentRunner:
                                      "content": output})
                     if task.finished:
                         return
+            if not task.finished and task.mode == "workspace-write":
+                self._salvage(task, client, messages, tools, web, seen)
             if not task.finished:
                 task.state, task.error = "failed", f"走了 {MAX_STEPS} 步还没做完，先停下"
         except Exception as exc:                      # noqa: BLE001
@@ -347,6 +358,39 @@ class AgentRunner:
             task.approval = None
             self.history.append(task)
             del self.history[:-20]
+
+    def _salvage(self, task: Task, client, messages, tools, web, seen) -> None:
+        """步数用完：只给写文件和 finish，让它把已经写好的存下来，并说明还差什么。"""
+        allowed = WRITE_TOOLS | {"finish"}
+        messages.append({"role": "user", "content": (
+            "（系统提示：步数用完了，不能再查资料。立刻把已经写好的内容用 write_file 保存，"
+            "然后调用 finish，说明完成了哪些、还差什么。）")})
+        for _ in range(WRITE_ROUNDS):
+            if task.finished:
+                return
+            message, usage = client.complete_tools(
+                messages, [t for t in tools if t["function"]["name"] in allowed], max_tokens=TURN_TOKENS)
+            task.usage.append(usage)
+            calls = message.get("tool_calls") or []
+            messages.append({"role": "assistant", "content": message.get("content") or "",
+                             **({"tool_calls": calls} if calls else {})})
+            if not calls:
+                self._finish(task, f"（步数用完，先交这些）{message.get('content') or ''}")
+                return
+            for call in calls:
+                name = (call.get("function") or {}).get("name", "")
+                try:
+                    args = json.loads((call.get("function") or {}).get("arguments") or "{}")
+                except ValueError:
+                    args = None
+                if not isinstance(args, dict) or name not in allowed:
+                    output = "出错：现在只能 write_file / finish，参数要是完整 JSON。"
+                elif name == "finish":
+                    self._finish(task, f"（步数用完，先交这些）{args.get('summary') or ''}")
+                    return
+                else:
+                    output = self._tool_once(task, name, args, web, seen)
+                messages.append({"role": "tool", "tool_call_id": call.get("id", ""), "content": output})
 
     @staticmethod
     def _finish(task: Task, summary: str) -> None:

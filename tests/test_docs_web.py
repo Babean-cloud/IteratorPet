@@ -257,6 +257,21 @@ def test_wrap_up_reminder_near_step_limit(tmp_path, monkeypatch):
     assert any("步数只剩 5 步" in str(m.get("content")) for m in client.seen[-1])
 
 
+def test_write_rounds_do_not_use_up_steps_and_limit_salvages_the_draft(tmp_path, monkeypatch):
+    from iterator_pet.brain import executor
+
+    monkeypatch.setattr(executor, "MAX_STEPS", 6)
+    script = [[("list_dir", {"path": "."})]]
+    script += [[("write_file", {"path": f"part{i}.md", "content": "x"})] for i in range(4)]   # 不占步数
+    script += [[("list_dir", {"path": f"d{i}"})] for i in range(5)]                          # 用完 6 步
+    script += [[("write_file", {"path": "讲义.md", "content": "草稿"})], [("finish", {"summary": "差第三章"})]]
+    client = ToolClient(script)
+    task = AgentRunner(lambda: client).start("写讲义", "workspace-write", str(tmp_path))
+    assert _wait(lambda: task.finished)
+    assert task.state == "done" and "步数用完" in task.result and "差第三章" in task.result
+    assert (tmp_path / "part3.md").exists() and (tmp_path / "讲义.md").read_text(encoding="utf-8") == "草稿"
+
+
 def test_truncated_tool_arguments_are_reported_not_swallowed(tmp_path):
     class Cut(ToolClient):
         def complete_tools(self, messages, tools, **kw):
