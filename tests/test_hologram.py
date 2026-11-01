@@ -68,9 +68,14 @@ def test_frame_animation_phases():
     _app()
     holo = H.Hologram(H.render_panel(300, [H.Line("监视者" * 20)], COLOR), seed=3)
     _, first = holo.frame(0)
-    _, settled = holo.frame(H.STRONG_TICKS)
-    assert first < 1.0 and settled == 1.0
-    assert holo.frame(H.STRONG_TICKS)[0] is holo.frame(H.STRONG_TICKS + 50)[0]      # 平时是同一张缓存图
+    calm = [a for a in range(H.STRONG_TICKS, H.STRONG_TICKS + H.GLITCH_PERIOD)
+            if (a + 3 * 37) % H.GLITCH_PERIOD >= H.GLITCH_TICKS]
+    _, settled = holo.frame(calm[0])
+    assert first < settled and 0.84 <= settled <= 0.96                               # 平时微微呼吸
+    assert holo.frame(calm[0])[0] is holo.frame(calm[50])[0]                         # 平时是同一张缓存图
+    glitch = next(a for a in range(H.STRONG_TICKS, 400) if (a + 3 * 37) % H.GLITCH_PERIOD == 0)
+    image, dim = holo.frame(glitch)
+    assert image is not holo.frame(calm[0])[0] and dim < 0.6                        # 隔几秒闪一下故障
     assert holo.frame(5)[0] is holo.frame(5)[0]                                      # 强效果每步也缓存
     assert holo.frame(100, leaving=0)[1] == 1.0
     assert holo.frame(100, leaving=H.STRONG_TICKS)[1] == 0.0

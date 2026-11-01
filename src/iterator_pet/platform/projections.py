@@ -189,7 +189,7 @@ class ConfirmOffer:
                         on_click=self.click, width=WIDE)
 
     def _lines(self) -> list[Line]:
-        lines = [Line("让它去做", "title"), Line(self.goal, "body"),
+        lines = [Line("让它去做", "title", icon="triangle"), Line(self.goal, "body"),
                  Line(f"文件夹：{self.folder or '（还没选）'}", "mono", 0.85),
                  Line(MODE_TEXT[self.mode], "body", 0.7)]
         if self.web and self.mode != "dsh":
@@ -249,7 +249,7 @@ class ProjectionSource:
         if mind != self._mind:
             first, self._mind = self._mind is None, mind      # 启动时导演里已有的旧念头不投
             if not first and not quiet and thought:
-                lines = [Line("它在想", "title")]
+                lines = [Line("它在想", "title", icon="eye")]
                 if mood:
                     lines.append(Line(f"心情：{mood}", "body", 0.8))
                 lines.append(Line(thought, "body"))
@@ -271,7 +271,7 @@ class ProjectionSource:
         if quiet or not task.progress:
             return
         recent = list(task.progress)[-PROGRESS_LINES:]
-        lines = [Line("演算中", "title"), *[Line(step, "body", 0.6 + 0.4 * (i == len(recent) - 1))
+        lines = [Line("演算中", "title", icon="spin"), *[Line(step, "body", 0.6 + 0.4 * (i == len(recent) - 1))
                                           for i, step in enumerate(recent)]]
         self.queue.post("task", PRI_STATUS, lines, ttl=STATUS_TTL, min_gap=STATUS_GAP // 2)
 
@@ -287,7 +287,7 @@ class ProjectionSource:
         cps = max(1.0, self.scroll_cps)
         # 特别长的结果别让监视者一直挂着：总时长封顶（鼠标停在面板上时倒计时是冻住的；想看全文点一下展开）
         ttl = int(min(SCROLL_DELAY + len(text) / cps + SCROLL_LINGER, SCROLL_MAX) * TPS)
-        self.queue.post("result", PRI_RESULT, [Line("演算结果", "title")], ttl=ttl, width=WIDE,
+        self.queue.post("result", PRI_RESULT, [Line("演算结果", "title", icon="check")], ttl=ttl, width=WIDE,
                         scroll_text=text, scroll_cps=cps, buttons=(), on_click=self._result_click)
 
     def _result_click(self, name: str) -> None:
@@ -306,7 +306,7 @@ class ProjectionSource:
         if approval is None:
             self.queue.withdraw("approval")
             return
-        lines = [Line("要运行一条命令", "title"), Line(task.approval_why or "（没说要做什么）", "body"),
+        lines = [Line("要运行一条命令", "title", icon="triangle"), Line(task.approval_why or "（没说要做什么）", "body"),
                  Line(approval.command, "mono")]
         if approval.warnings:
             lines.append(Line("注意：" + "、".join(approval.warnings), "body", 1.0, warn=True))

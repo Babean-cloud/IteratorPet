@@ -21,6 +21,8 @@ from PySide6.QtGui import QColor, QFont, QFontMetrics, QImage, QLinearGradient, 
 
 WARN_COLOR = (1.0, 0.35, 0.25)          # 危险提示用红
 STRONG_TICKS = 12                       # 出现 / 消失时强效果持续多久（40 TPS 下 0.3 s）
+GLITCH_PERIOD = 40 * 3                  # 平时每隔多久闪一次故障（tick）
+GLITCH_TICKS = 3                        # 一次故障闪几帧
 BACKING_ALPHA = 0.62                    # 面板暗底的不透明度（越大背后的字越看不见）
 SCAN_STEP = 3                          # 隔几个像素压一条暗扫描线
 PAD_X, PAD_Y = 16, 14
@@ -36,6 +38,7 @@ class Line:
     kind: str = "body"                  # title | body | mono
     alpha: float = 1.0
     warn: bool = False
+    icon: str = ""                      # 标题前的状态符号：eye | spin | triangle | check | cross | globe（见 STATUS_ICONS）
 
 
 @dataclass(frozen=True)
@@ -59,10 +62,10 @@ def make_font(kind: str) -> QFont:
     font = QFont()
     if kind == "mono":
         font.setFamilies(MONO_FAMILIES)
-        font.setPointSize(10)
+        font.setPointSizeF(8.5)
     else:
         font.setFamilies(UI_FAMILIES)
-        font.setPointSize(12 if kind == "title" else 11)
+        font.setPointSizeF(10.0 if kind == "title" else 9.0)     # 用户 2026-11-01：字小一号（原 12 / 11）
         if kind == "title":
             font.setWeight(QFont.Weight.DemiBold)
     return font
@@ -115,30 +118,96 @@ def _layout_rows(lines: list[Line], inner: float) -> list[tuple]:
 
 def _paint_rows(p: QPainter, rows: list[tuple], x: float, y: float, inner: float, color) -> float:
     align = Qt.AlignmentFlag.AlignLeft
+    seen: set[int] = set()
     for text, font, h, line in rows:
         c = WARN_COLOR if line.warn else color
+        tx = x
+        if line.icon and id(line) not in seen:              # 符号只画在这一行折出来的第一段前面
+            seen.add(id(line))
+            draw_status_icon(p, line.icon, QPointF(x + ICON_R, y + h / 2), c, line.alpha)
+            tx = x + ICON_W
+        elif line.icon:
+            tx = x + ICON_W
         p.setFont(font)
         p.setPen(qcolor(c, 0.25 * line.alpha))              # 发光：错开一像素再画一遍
         for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-            p.drawText(QRectF(x + dx, y + dy, inner, h), align, text)
+            p.drawText(QRectF(tx + dx, y + dy, inner, h), align, text)
         p.setPen(qcolor(c, line.alpha, 1.15))
-        p.drawText(QRectF(x, y, inner, h), align, text)
+        p.drawText(QRectF(tx, y, inner, h), align, text)
         y += h
     return y
 
 
+ICON_R = 6.0                            # 状态符号的半径
+ICON_W = 2 * ICON_R + 7                 # 符号占的宽（含与字的间距）
+
+
+def draw_status_icon(p: QPainter, icon: str, c: QPointF, color, alpha: float = 1.0) -> None:
+    """标题前的小几何符号（照游戏里监视者 / 迭代器 UI 那种单色线符号，自己画，不用游戏素材）。"""
+    p.save()
+    p.setPen(QPen(qcolor(color, alpha, 1.15), 1.3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap,
+                  Qt.PenJoinStyle.RoundJoin))
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    x, y, r = c.x(), c.y(), ICON_R
+    if icon == "eye":                   # 在看 / 盯着：圈 + 实心瞳
+        p.drawEllipse(c, r, r)
+        p.setBrush(qcolor(color, alpha, 1.15))
+        p.drawEllipse(c, 1.8, 1.8)
+    elif icon == "spin":                # 演算中：断开的圈
+        p.drawArc(QRectF(x - r, y - r, 2 * r, 2 * r), 30 * 16, 120 * 16)
+        p.drawArc(QRectF(x - r, y - r, 2 * r, 2 * r), 210 * 16, 120 * 16)
+    elif icon == "triangle":            # 要你批准 / 确认
+        p.drawPolygon([QPointF(x, y - r), QPointF(x + r, y + r * 0.8), QPointF(x - r, y + r * 0.8)])
+    elif icon == "check":
+        p.drawPolyline([QPointF(x - r, y), QPointF(x - r * 0.25, y + r * 0.7), QPointF(x + r, y - r * 0.8)])
+    elif icon == "cross":
+        p.drawLine(QPointF(x - r * 0.8, y - r * 0.8), QPointF(x + r * 0.8, y + r * 0.8))
+        p.drawLine(QPointF(x + r * 0.8, y - r * 0.8), QPointF(x - r * 0.8, y + r * 0.8))
+    elif icon == "globe":
+        p.drawEllipse(c, r, r)
+        p.drawLine(QPointF(x - r, y), QPointF(x + r, y))
+        p.drawLine(QPointF(x, y - r), QPointF(x, y + r))
+    p.restore()
+
+
+def octagon(x: float, y: float, w: float, h: float, cut: float) -> QPainterPath:
+    """切角矩形（游戏里迭代器 / 监视者投影框那种八边形）。"""
+    cut = min(cut, w / 4, h / 4)
+    path = QPainterPath()
+    path.moveTo(x + cut, y)
+    for px, py in ((x + w - cut, y), (x + w, y + cut), (x + w, y + h - cut), (x + w - cut, y + h),
+                   (x + cut, y + h), (x, y + h - cut), (x, y + cut)):
+        path.lineTo(px, py)
+    path.closeSubpath()
+    return path
+
+
 def draw_backdrop(p: QPainter, width: float, height: float, color, x: float = 0.0, y: float = 0.0) -> None:
-    """面板的底：暗底 + 很淡的色底 + 四角括线（原作全息没有框，这里只给角标，保证中文压在花桌面上也读得清）。
+    """面板的底：八边形暗底 + 很淡的色底 + 发散的边（用户 2026-11-01：不要方框硬边，边缘要糊、像投影）。
     输入投影（QuickBar）的皮肤也用它，两边观感一致。"""
+    g = GLOW
+    shape = octagon(x + g, y + g, width - 2 * g, height - 2 * g, CUT)
     # 先铺一层半透明的暗底：桌面上的文字 / 花图案透过很淡的色底会和投影字混在一起（用户实测）。
     # Qt 的分层窗口没法"模糊背后的桌面"，压暗是能做到的最接近的办法
-    p.fillRect(QRectF(x, y, width, height), QColor(8, 9, 14, int(255 * BACKING_ALPHA)))
-    p.fillRect(QRectF(x, y, width, height), qcolor(color, 0.07))
-    p.setPen(QPen(qcolor(color, 0.8), 1.4))
-    for (cx, cy, dx, dy) in ((x, y, 1, 1), (x + width, y, -1, 1), (x, y + height, 1, -1),
-                             (x + width, y + height, -1, -1)):
-        p.drawLine(QPointF(cx, cy), QPointF(cx + dx * 14, cy))
-        p.drawLine(QPointF(cx, cy), QPointF(cx, cy + dy * 14))
+    p.save()
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QColor(8, 9, 14, int(255 * BACKING_ALPHA)))
+    p.drawPath(shape)
+    p.setBrush(qcolor(color, 0.07))
+    p.drawPath(shape)
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    for width_px, alpha in ((2 * g, 0.06), (1.4 * g, 0.10), (0.8 * g, 0.16)):     # 由宽到窄叠几层 = 糊开的光边
+        p.setPen(QPen(qcolor(color, alpha), width_px))
+        p.drawPath(shape)
+    pen = QPen(qcolor(color, 0.55, 1.1), 0.9)
+    pen.setDashPattern([28, 3, 9, 2])                       # 细亮线断续，不是一条完整的硬框
+    p.setPen(pen)
+    p.drawPath(shape)
+    p.restore()
+
+
+GLOW = 5.0                              # 光边糊开的宽度（面板四周留这么多）
+CUT = 12.0                              # 八边形切角
 
 
 def _begin(width: int, height: int, color) -> tuple[QImage, QPainter]:
@@ -265,6 +334,7 @@ class Hologram:
         self.seed = seed
         self._calm: QImage | None = None
         self._strong: dict[int, QImage] = {}
+        self._glitch: dict[int, QImage] = {}
 
     def _jitter_rows(self, rng: random.Random) -> list[tuple[int, int]]:
         """每次随机挑 1–3 段整体错开的行带，高度按面板比例。"""
@@ -294,7 +364,21 @@ class Hologram:
             return self._strong_frame(age), min(1.0, 0.25 + age / STRONG_TICKS)
         if self._calm is None:
             self._calm = holo_effect(self.image, random.Random(self.seed), (), drop=0.0)
-        return self._calm, 1.0
+        return self._idle(age)
+
+    def _idle(self, age: int) -> tuple[QImage, float]:
+        """站稳以后的故障感（用户 2026-11-01）：大部分时间微微呼吸，隔几秒闪暗一下、错开一段行。
+        闪的时机按面板 seed 错开，两只监视者不会同时闪；只闪 GLITCH_TICKS 帧，不影响读字。"""
+        breath = 0.9 + 0.06 * math.sin(age * 0.11 + self.seed)
+        phase = (age + self.seed * 37) % GLITCH_PERIOD
+        if phase < GLITCH_TICKS:
+            frame = self._glitch.get(phase)
+            if frame is None:
+                rng = random.Random(self.seed * 7919 + phase)
+                frame = holo_effect(self.image, rng, self._jitter_rows(rng)[:1], drop=0.04)
+                self._glitch[phase] = frame
+            return frame, (0.45, 0.8, 0.6)[phase % 3]
+        return self._calm, breath
 
 
 class ScrollPanel(Hologram):
@@ -366,7 +450,7 @@ class ScrollPanel(Hologram):
     def frame(self, age: int, leaving: int | None = None, offset: float = 0.0) -> tuple[QImage, float]:
         if leaving is not None or age < STRONG_TICKS:
             return super().frame(age, leaving)
-        return self._compose(offset), 1.0
+        return self._compose(offset), 0.9 + 0.06 * math.sin(age * 0.11 + self.seed)
 
 
 def place_panel(w: float, h: float, body, head, inward, screen) -> QRectF:
