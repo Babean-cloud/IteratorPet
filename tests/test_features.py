@@ -126,6 +126,36 @@ def test_task_result_reaches_director_once(tmp_path):
     assert "task_result" not in director.observe(sim, "idle"), "只附加一次"
 
 
+def test_task_end_always_gets_a_line_even_if_the_model_stays_silent():
+    import json
+    from datetime import datetime
+
+    from iterator_pet.brain.director import TASK_NOTICE_WAIT, Director
+    from iterator_pet.simulation.state import SimulationState
+
+    class Silent:
+        def complete(self, messages, **_):
+            return json.dumps({"say": None, "thought": "累，不想说"}), {}
+
+    sim = SimulationState((0.0, 0.0, 776.0, 415.0), warmup=0)
+    sim.pool_lines = False
+    clock = {"t": 1000.0}
+    director = Director(Silent(), clock=lambda: clock["t"], idle_fn=lambda: 0.0,
+                        wall=lambda: datetime(2026, 10, 30, 14, 0))
+    director.apply(sim, {"say": None}, "task_done")                     # 没有待报的任务：不硬塞
+    assert not sim.dialogue.text
+    director.task_finished("超时", ok=False)
+    director.apply(sim, {"say": None}, "task_done")
+    assert "没做成" in sim.dialogue.text                                 # 模型不说，用保底的
+
+    sim2 = SimulationState((0.0, 0.0, 776.0, 415.0), warmup=0)
+    director.task_finished("好了", ok=True)                             # 一直没轮到模型（比如在打盹）
+    clock["t"] += TASK_NOTICE_WAIT + 1
+    director.away = True
+    director.tick(sim2)
+    assert "演算完成" in sim2.dialogue.text
+
+
 def test_pixel_layout_and_compositor():
     from PySide6.QtGui import QImage
     from PySide6.QtWidgets import QApplication

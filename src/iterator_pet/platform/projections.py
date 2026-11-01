@@ -265,22 +265,37 @@ class ProjectionSource:
             self._progress_task, self._progress_n = task, (len(task.progress) if task is not None else 0)
             self._observe_result(task, quiet)
             return
-        if task is self._progress_task and len(task.progress) == self._progress_n:
+        if quiet:
+            self.queue.withdraw("task")                       # 对话窗口开着：那边能看进度
+            self._progress_task = None
             return
+        if task is self._progress_task and len(task.progress) == self._progress_n and self.queue.has("task"):
+            return
+        fresh = task is not self._progress_task or not self.queue.has("task")
         self._progress_task, self._progress_n = task, len(task.progress)
-        if quiet or not task.progress:
-            return
-        recent = list(task.progress)[-PROGRESS_LINES:]
+        recent = list(task.progress)[-PROGRESS_LINES:] or [f"开始：{getattr(task, 'text', '')[:60]}"]
         lines = [Line("演算中", "title", icon="spin"), *[Line(step, "body", 0.6 + 0.4 * (i == len(recent) - 1))
                                           for i, step in enumerate(recent)]]
-        self.queue.post("task", PRI_STATUS, lines, ttl=STATUS_TTL, min_gap=STATUS_GAP // 2)
+        # 用户 2026-11-01：任务跑着的时候监视者一直在，不要自己消失（ttl=None，任务结束时 withdraw）；
+        # 进度更新原地重画，不每步都重放出现的错动
+        if fresh:
+            self.queue.post("task", PRI_STATUS, lines, ttl=None)
+        else:
+            self.queue.update("task", lines)
 
     def _observe_result(self, task, quiet: bool) -> None:
-        if task is None or task.state != "done" or not task.result or task is self._result_task:
+        if task is None or not task.finished or task is self._result_task:
             return
         self._result_task = task
-        if not quiet:
+        if quiet:
+            return
+        if task.state == "done" and task.result:
             self.post_result(task.result)
+        elif task.state in ("failed", "timeout"):              # 失败也投出来，不然只看得到进度突然没了
+            self.queue.post("result", PRI_RESULT, [Line("演算没做成", "title", icon="cross"),
+                                                   Line(task.error or "没有说原因", "body", warn=True),
+                                                   Line("详情在对话窗口里", "body", 0.6)],
+                            ttl=10 * TPS, width=WIDE)
 
     def post_result(self, text: str) -> None:
         """长结果：慢速上滚，滚完停几秒；点一下展开完整对话窗口。"""

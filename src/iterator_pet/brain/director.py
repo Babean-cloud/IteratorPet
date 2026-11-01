@@ -36,6 +36,7 @@ URGENT_GAP = 6.0           # 紧急事件 / 用户说话：两次请求至少隔
 SAY_FLOOR = 60.0           # 自主开口的硬下限（秒）：话量再高、被回应得再多，两次自主开口也不会比这更近
 AUTO_GAP = 18.0            # 自主请求之间至少隔几秒
 ERROR_BACKOFF = 30.0
+TASK_NOTICE_WAIT = 20.0    # 任务结束后模型多久没开口就本地说一句
 PERCEIVE_EVERY = 2.0
 STATS_EVERY = 3600.0
 AWAY_SECONDS = 600.0       # 键鼠空闲这么久 = 用户离开
@@ -194,6 +195,7 @@ class Director:
         self.quiet = False                # 勿扰（全屏）：不主动请求、不主动说话
         self.system: dict = {}            # 窗口每秒写：cpu / battery / charging
         self._extra_obs: dict = {}        # 一次性附加进下一次观察（任务结果等）
+        self._task_notice: tuple[str, float] | None = None   # 任务结束的保底提示（task_finished）
         self._late_day: str | None = None
         self._long_marked: float | None = None
         self._agent_pending: dict | None = None   # 编程 agent 发来、还没说出口的通知
@@ -296,6 +298,8 @@ class Director:
         """委托任务（dsh）结束：让它用自己的口吻说一句。结果全文在对话窗口里，这里只给摘要。"""
         self._extra_obs["task_result"] = ("完成：" if ok else "失败：") + text[:600]
         self.log(f"你替用户做的演算{'完成' if ok else '失败'}了")
+        # 保底：模型那一轮没说话（精力低 / 觉得没必要），或者一直没轮到，也要让用户知道结束了
+        self._task_notice = ("演算完成了。结果在对话窗口里。" if ok else "……演算没做成。原因在对话窗口里。", self.clock())
         self.bump("task_done")
 
     @property
@@ -362,6 +366,11 @@ class Director:
         self._last_tick = now
         self._drain_results(sim)
         self._drain_errands(sim)
+        notice = self._task_notice
+        if notice is not None and now - notice[1] > TASK_NOTICE_WAIT:
+            # 任务结束了，模型那边迟迟没开口（打盹 / 请求失败 / 被别的事挤掉）：本地说一句，别让人干等
+            self._task_notice = None
+            self._say(sim, notice[0], direct=True)
 
         for event in sim.pending_events:
             if event in ("drag", "angry"):
@@ -965,7 +974,12 @@ class Director:
             action = {k: action.get(k) for k in ("say", "mood", "thought")}
             if action.get("say"):
                 self.planner.load([{"do": "go", "to": "cursor"}], sim)
-        self._say(sim, action.get("say"), direct=reason in DIRECT_REASONS)
+        said = action.get("say")
+        if reason == "task_done" and self._task_notice is not None:
+            if not (isinstance(said, str) and said.strip()):
+                said = self._task_notice[0]          # 任务结束这一轮必须有一句，模型不说就用保底的
+            self._task_notice = None
+        self._say(sim, said, direct=reason in DIRECT_REASONS)
         mood = action.get("mood")
         if isinstance(mood, str) and mood.strip():
             self.mood = mood.strip()[:12]

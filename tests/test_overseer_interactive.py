@@ -55,7 +55,7 @@ def test_approval_only_answers_on_explicit_button_names():
         q.click(junk)
     assert answers == [] and q.current.kind == "approval"             # 乱七八糟的名字一律不放行
     q.click("allow")
-    assert answers == [True] and q.current is None
+    assert answers == [True] and q.current.kind == "task"              # 批准撤了，剩下任务进度（任务跑着就一直在）
     q.click("allow")                                                  # 已经答过，再点没有任何效果
     assert answers == [True]
 
@@ -71,7 +71,7 @@ def test_approval_deny_and_answered_elsewhere():
     src.observe(task=_task(other))
     other.allowed = True                                               # 在对话窗口里答了
     src.observe(task=_task(other))
-    assert q.current is None
+    assert q.current.kind == "task"
 
 
 def test_approval_outranks_status_and_does_not_expire():
@@ -138,7 +138,7 @@ def test_confirm_withdrawn_when_task_started_elsewhere(tmp_path):
     q, offer = _offer(tmp_path, [])
     src = P.ProjectionSource(q)
     src.observe(task=_task())
-    assert q.current is None
+    assert q.current.kind == "task"                                 # 确认卡作废，换成任务进度
 
 
 # ---- 长结果 ------------------------------------------------------------------------------------
@@ -249,3 +249,20 @@ def test_scroll_panel_scrolls_after_delay_and_pauses_on_hover():
     for _ in range(40):
         layer.step(state, 1.0, SIZE)
     assert layer._scroll_offset() == moved                             # 鼠标停着：不滚
+
+
+def test_task_panel_stays_while_running_and_failure_is_projected():
+    q, src = _source([])
+    task = _task()
+    task.progress = ["读取 a.pdf"]
+    src.observe(task=task)
+    for _ in range(P.TPS * 120):                                       # 跑两分钟也不消失
+        q.step()
+    assert q.current.kind == "task"
+    task.progress.append("写入 讲义.md")
+    serial = q.current.serial
+    src.observe(task=task)
+    assert q.current.serial == serial and q.current.lines[-1].text == "写入 讲义.md"   # 原地更新，不重放出现
+    task.state, task.error, task.finished = "failed", "超时", True
+    src.observe(task=task)
+    assert q.current.kind == "result" and any(line.warn for line in q.current.lines)
