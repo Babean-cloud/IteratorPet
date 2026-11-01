@@ -5,8 +5,16 @@
 """
 
 import copy
+import os
 
 import pytest
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from PySide6.QtWidgets import QApplication  # noqa: E402
+
+# 整个测试进程只建一个 QApplication（它也是 QGuiApplication）：有的文件先建了 QGuiApplication，
+# 后面要 QWidget 的测试就建不了窗口，只能跳过。并行跑时每个 worker 各一个。
+_APP = QApplication.instance() or QApplication([])
 
 from iterator_pet.simulation import state as _state
 

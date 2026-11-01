@@ -23,10 +23,13 @@ from PySide6.QtWidgets import QWidget
 from .bubble import draw_bubble_world
 from .compose import Compositor
 from .marks import draw_errand_mark, draw_screen_mark
+from ..simulation import constants as C
 from ..simulation.overseer import SIDE_ORDER
 from .overseer_layer import OverseerLayer
 from .pearls import draw_pearls
 from .renderer import draw_scene
+
+DIRTY_PAD = 70.0          # 局部重画时人偶外包矩形再往外扩多少（仿真 px）：落影、头后暗晕、放电、扫描圈、一帧的位移
 
 
 class PetCanvas(QWidget):
@@ -132,6 +135,44 @@ class PetCanvas(QWidget):
             self._low = low
         return low
 
+    def dirty_rect(self):
+        """这一帧需要重画的区域（本窗口坐标 QRect）；整屏都要重画时返回 None。
+
+        桌宠是铺满全屏的透明窗口，每帧整屏重画再整屏交给系统合成，是 CPU 的大头（用户 2026-11-01 实测
+        约 1 个核心）。平时只有人偶、机械臂、缆线、光环、监视者、字幕那几块在变，只重画它们的外包矩形。
+        电光一亮就伸到屏幕边、杀鼠标的白光铺满全屏：这些时候整屏。"""
+        from PySide6.QtCore import QRect
+
+        state = self._drawn_state
+        if state is None or getattr(state, "kill_phase", "idle") != "idle" or getattr(state, "kill_flash", 0.0) > 0.0:
+            return None
+        if any(light > C.HALO_SPARK_VISIBLE for _a, _h, light in state.halo_sparks):
+            return None
+        points = [state.base_point, state.head, state.halo_center, *state.joints, *state.cord,
+                  *state.hands, *state.feet]
+        for strand in state.filaments:
+            points += strand
+        for row in state.gown:
+            points += row
+        points += [p[0] for p in state.pearls]
+        xs, ys = [p[0] for p in points], [p[1] for p in points]
+        halo = (C.HALO_RADIUS_BASE + len(C.HALO_RINGS) + state.halo_push) * state.halo_expand * 10.0
+        pad = DIRTY_PAD + halo
+        s = self.scale
+        rect = QRect(int((min(xs) - pad) * s), int((min(ys) - pad) * s),
+                     int((max(xs) - min(xs) + 2 * pad) * s) + 1, int((max(ys) - min(ys) + 2 * pad) * s) + 1)
+        for layer in (self.overseer, self.overseer2):
+            if not layer.visible:
+                continue
+            hole, body = layer.sim.hole, layer.sim.body
+            rect = rect.united(QRect(int(min(hole[0], body[0]) - 140), int(min(hole[1], body[1]) - 140),
+                                     int(abs(hole[0] - body[0]) + 280), int(abs(hole[1] - body[1]) + 280)))
+            for r in layer.regions():
+                rect = rect.united(r.toAlignedRect().adjusted(-8, -8, 8, 8))
+        if self.bubble_rect is not None:
+            rect = rect.united(self.bubble_rect.toAlignedRect().adjusted(-6, -6, 6, 6))
+        return rect.intersected(self.rect())
+
     def own_regions(self) -> list[tuple[int, int, int, int]]:
         """气泡、监视者和投影面板在屏幕上的物理像素矩形 (左, 上, 右, 下)，给读屏幕盖白用。"""
         from PySide6.QtCore import QPoint
@@ -175,7 +216,14 @@ class PetCanvas(QWidget):
         key = self._frame_stamp()
         if self._frame_key != key:
             pixmap = self._ensure_frame()
-            pixmap.fill(Qt.GlobalColor.transparent)     # 复用同一块，只清内容
+            clear = event.rect() if event is not None and event.rect() != self.rect() else None
+            if clear is None:
+                pixmap.fill(Qt.GlobalColor.transparent)     # 复用同一块，只清内容
+            else:                                           # 局部重画：只清这一块（上一帧的位置也在里面）
+                eraser = QPainter(pixmap)
+                eraser.setCompositionMode(QPainter.CompositionMode.CompositionMode_Clear)
+                eraser.fillRect(clear, Qt.GlobalColor.transparent)
+                eraser.end()
             frame_painter = QPainter(pixmap)
             frame_painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
             frame_painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)

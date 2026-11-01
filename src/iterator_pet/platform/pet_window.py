@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+import math
 import sys
 import threading
 import time
@@ -38,8 +39,9 @@ GIFT_LINES = {
     "past_moon": ("请把这颗带给他吧……希望他会看。", "麻烦你转交给他，谢谢。",
                   "这颗……也许他会喜欢。拜托你了。", "替我交给卵石吧，别让他知道我在担心。"),
 }
-
-
+CALM_FPS = 30            # 平常自己待着：仿真本来就是 40 TPS，60 帧里有三分之一是插值帧，减到 30 看不出
+AWAY_FPS = 8             # 用户离开了：没人看
+AWAY_TIME_SCALE = 0.25   # 离开时仿真按 1/4 速走（物理开销跟着降到 1/4）
 
 
 def _drop_log(message: str) -> None:
@@ -290,6 +292,10 @@ class PetWindow(PetCanvas):
         now = time.perf_counter()
         elapsed = now - self._last
         self._last = now
+        if self._idle_mode() == "away":
+            # 用户离开了（键鼠 10 分钟没动、没有投影、没在拖）：没人看，仿真放慢到 1/4 速（慢动作），
+            # 帧率降到 AWAY_FPS。导演用的是自己的时钟，提醒 / 心事照常按真实时间走
+            elapsed *= AWAY_TIME_SCALE
         if not self._paused and elapsed > 0.0:
             # The cursor must be sampled once per SIMULATION TICK, not once per
             # frame. ``advance`` can run up to 8 sub-steps for one frame, and the
@@ -318,7 +324,43 @@ class PetWindow(PetCanvas):
         self._tick_gifts()
         self.sound.update(self._drawn_state, self.simulation.dialogue, self.character,
                           reading_pearl=self.simulation.pearls.reading is not None)
-        self.update()
+        self._retime()
+        self._request_paint()
+
+    # -- 省 CPU：按情况降帧率、只重画变了的那块（用户 2026-11-01：平时就占满一个核心） ------------
+    def _idle_mode(self) -> str:
+        """active = 用户在跟它互动（拖拽 / 投影在 / 杀鼠标 / 换角色 / 光标在附近），按配置帧率；
+        calm = 平常自己待着，CALM_FPS；away = 用户离开了，AWAY_FPS + 慢动作仿真。"""
+        sim = self.simulation
+        busy = (getattr(sim, "dragging", False) or sim.swap_phase is not None
+                or getattr(getattr(sim, "kill", None), "phase", "idle") != "idle"
+                or self.overseer.visible or self.overseer2.visible)
+        if busy:
+            return "active"
+        director = getattr(self, "director", None)
+        if director is not None and director.away:
+            return "away"
+        cursor, head = getattr(sim, "cursor", None), sim.creature.chunk0
+        if cursor is not None and math.dist(cursor, head) < 260.0:
+            return "active"
+        return "calm"
+
+    def _retime(self) -> None:
+        mode = self._idle_mode()
+        fps = {"active": self.config.fps, "calm": min(self.config.fps, CALM_FPS),
+               "away": AWAY_FPS}[mode]
+        interval = max(4, int(1000 / max(1, fps)))
+        if self._timer.isActive() and self._timer.interval() != interval:
+            self._timer.setInterval(interval)
+
+    def _request_paint(self) -> None:
+        """只重画这一帧和上一帧占的区域；算不出（电光 / 杀鼠标 / 刚整屏画过）就整屏。"""
+        rect = self.dirty_rect()
+        previous, self._last_dirty = getattr(self, "_last_dirty", None), rect
+        if rect is None or previous is None:
+            self.update()
+        else:
+            self.update(rect.united(previous))
 
     def _update_hit_passthrough(self) -> None:
         """只有滑车和人偶（头/身体）能点，其余地方一律让鼠标穿过去。
