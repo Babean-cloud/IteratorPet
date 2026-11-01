@@ -29,7 +29,6 @@ from .pearls import draw_pearls
 from .renderer import draw_scene
 
 
-
 class PetCanvas(QWidget):
     def __init__(
         self,
