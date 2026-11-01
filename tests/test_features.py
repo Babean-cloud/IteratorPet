@@ -17,7 +17,7 @@ from iterator_pet.brain.tasks import TaskRunner
 
 FAKE_DSH = r"""
 import json, os, sys, time
-task = sys.stdin.read()
+task = sys.stdin.buffer.read().decode("utf-8")   # 真 dsh（Node）按 UTF-8 读；别跟着系统区域设置走（Git Bash 下是 GBK）
 print(json.dumps({"type": "session", "sessionId": "session-fake", "cwd": os.getcwd()}), flush=True)
 print(json.dumps({"type": "tool_call", "tool": "fs.list"}), flush=True)
 mode = os.environ.get("DSH_PERMISSION_MODE")
