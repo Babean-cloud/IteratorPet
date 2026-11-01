@@ -298,13 +298,24 @@ def smooth(x: float) -> float:
 
 
 def _begin(width: int, height: int, color) -> tuple[QImage, QPainter]:
+    """前景层（字、按钮）：透明底。暗底单独一层（``_backdrop_image``），不进溶解遮罩——
+    在暗底上挖洞，白色桌面会从洞里透出来，满屏白块乱闪（用户 2026-11-01 实测，深色背景上看不出）。"""
     img = QImage(width, height, QImage.Format.Format_ARGB32_Premultiplied)
     img.fill(Qt.GlobalColor.transparent)
     p = QPainter(img)
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
     p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
-    draw_backdrop(p, width, height, color, edge=False)      # 边由 Hologram 每帧加（会动）
     return img, p
+
+
+def _backdrop_image(width: int, height: int, color) -> QImage:
+    img = QImage(width, height, QImage.Format.Format_ARGB32_Premultiplied)
+    img.fill(Qt.GlobalColor.transparent)
+    p = QPainter(img)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    draw_backdrop(p, width, height, color, edge=False)      # 边由 Hologram 每帧加（会动）
+    p.end()
+    return img
 
 
 def render_panel(width: int, lines: list[Line], color, buttons: list[Button] | tuple = ()) -> QImage:
@@ -399,6 +410,7 @@ class Hologram:
         self.color = color                       # 给了才画会动的边（draw_edge）
         self._scanned: QImage | None = None
         self._dissolve = _Dissolve(image.width(), image.height())
+        self._backdrop = _backdrop_image(image.width(), image.height(), color or (0.447, 0.902, 0.769))
 
     def _base(self, offset: float) -> QImage:
         if self._scanned is None:
@@ -422,7 +434,15 @@ class Hologram:
             p.setRenderHint(QPainter.RenderHint.Antialiasing)
             draw_edge(p, image.width(), image.height(), self.color, t, self.seed)
             p.end()
-        return dissolve(image, self._dissolve.keep(t, alpha)), 1.0
+        fore = dissolve(image, self._dissolve.keep(t, alpha))
+        out = QImage(self._backdrop)                 # 暗底整块跟着 alpha 淡入淡出，不挖洞
+        p = QPainter(out)
+        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_DestinationIn)
+        p.fillRect(out.rect(), QColor(0, 0, 0, int(255 * alpha)))
+        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+        p.drawImage(0, 0, fore)
+        p.end()
+        return out, 1.0
 
 
 class ScrollPanel(Hologram):

@@ -65,8 +65,18 @@ def test_scroll_panel_scrolls_within_range():
 
 
 def _alive(img: QImage) -> int:
-    """图里还留着的（不透明的）像素数，隔点采样。"""
-    return sum(1 for y in range(0, img.height(), 2) for x in range(0, img.width(), 2) if img.pixelColor(x, y).alpha() > 0)
+    """图里还留着的不透明度总和，隔点采样（暗底整块淡入、字被溶出来，两样都算进去）。"""
+    return sum(img.pixelColor(x, y).alpha() for y in range(0, img.height(), 2) for x in range(0, img.width(), 2))
+
+
+def test_backdrop_is_never_punched_through_once_settled():
+    """溶解只挖字和边，不挖暗底：白色桌面上不该透出一闪一闪的白块（用户 2026-11-01）。"""
+    _app()
+    holo = H.Hologram(H.render_panel(300, [H.Line("监视者" * 20)], COLOR), seed=3, color=COLOR)
+    img = holo.frame(H.STRONG_TICKS + 40)[0]
+    w, h = img.width(), img.height()
+    inside = [img.pixelColor(x, y).alpha() for y in range(20, h - 20, 3) for x in range(20, w - 20, 3)]
+    assert min(inside) >= int(255 * H.BACKING_ALPHA) - 2
 
 
 def test_frame_dissolves_in_and_out_instead_of_shifting_rows():
