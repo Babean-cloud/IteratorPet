@@ -59,6 +59,10 @@ class Projection:
     scroll_cps: float = 0.0             # 滚动速度（字/秒）
 
 
+def _passive(p: Projection) -> bool:
+    return not p.buttons and p.on_click is None and p.kind != "input" and not p.scroll_text
+
+
 class ProjectionQueue:
     def __init__(self):
         self._items: list[Projection] = []
@@ -70,6 +74,16 @@ class ProjectionQueue:
     @property
     def current(self) -> Projection | None:
         return self._current
+
+    @property
+    def second(self) -> Projection | None:
+        """第二只监视者要投的：队列里还排着、而且只是看的（没按钮、不是输入条、不是要点开的长文）那一条。
+        只有正在显示的那条之外确实还有东西要看才有，平时还是一只。"""
+        cur = self._current
+        if cur is None:
+            return None
+        rest = [p for p in self._items if p is not cur and _passive(p)]
+        return min(rest, key=lambda p: (p.priority, p.serial), default=None)
 
     @property
     def version(self) -> int:
@@ -123,11 +137,12 @@ class ProjectionQueue:
     def step(self, paused: bool = False) -> None:
         """每仿真 tick 一次：只有正在显示的那条走 ttl；``paused`` 时冻住。"""
         self._now += 1
-        cur = self._current
-        if cur is not None and cur.ttl is not None and not paused:
-            cur.ttl -= 1
-            if cur.ttl <= 0:
-                self._items.remove(cur)
+        if not paused:
+            for shown in {id(p): p for p in (self._current, self.second) if p is not None}.values():
+                if shown.ttl is not None:
+                    shown.ttl -= 1
+                    if shown.ttl <= 0:
+                        self._items.remove(shown)
         self._pick()
 
     def click(self, name: str) -> None:

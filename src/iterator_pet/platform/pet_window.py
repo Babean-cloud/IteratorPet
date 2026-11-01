@@ -401,6 +401,10 @@ class PetWindow(PetCanvas):
             self._projection_source.forget_approval()      # 中途又打开时，还在等的批准要重新投出来
             self.overseer.clear()
             self.overseer.step(state, self.scale, (self.width(), self.height()), quiet=True)
+            second = getattr(self, "overseer2", None)
+            if second is not None:
+                second.clear()
+                second.step(state, self.scale, (self.width(), self.height()), quiet=True)
             PetWindow._sync_own_ui(self, director, None)
             return
         self._projection_source.observe(
@@ -430,6 +434,16 @@ class PetWindow(PetCanvas):
         cursor = state.cursor
         look = (cursor[0] * self.scale, cursor[1] * self.scale) if cursor is not None else None
         self.overseer.step(state, self.scale, (self.width(), self.height()), look=look, quiet=quiet)
+        second = getattr(self, "overseer2", None)                # 测试里的假窗口可能没有第二只
+        if second is not None:
+            extra = queue.second
+            if extra is not None:
+                second.show(extra.serial, extra.lines, width=extra.width, revision=extra.revision)
+            else:
+                second.clear()
+            first = self.overseer.sim
+            second.step(state, self.scale, (self.width(), self.height()), look=look, quiet=quiet,
+                        avoid=(first.edge,) if first.visible else ())
         PetWindow._sync_own_ui(self, director, current)   # 测试里 self 是假对象
 
     def _sync_own_ui(self, director, current) -> None:

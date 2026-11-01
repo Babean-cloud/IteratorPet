@@ -46,7 +46,7 @@ def test_same_kind_replaces_and_bumps_version():
 
 def test_ttl_only_runs_while_shown():
     q = P.ProjectionQueue()
-    q.post("mind", P.PRI_STATUS, _lines(), ttl=10)
+    q.post("mind", P.PRI_STATUS, _lines(), ttl=10, buttons=("x",))   # 带按钮：不能上第二只监视者，只能排队
     q.post("approval", P.PRI_APPROVAL, _lines())
     _run(q, 50)
     assert q.current.kind == "approval"                  # 被压着的 mind 没走时间
@@ -105,3 +105,17 @@ def test_source_task_progress_shows_recent_steps_and_clears_on_finish():
     task.finished = True
     src.observe(task=task)
     assert q.current is None
+
+
+def test_second_channel_only_for_passive_items_while_something_else_shows():
+    from iterator_pet.platform.projections import ProjectionQueue
+    from iterator_pet.rendering.hologram import Line
+
+    q = ProjectionQueue()
+    q.post("mood", 5, [Line("烦")], ttl=40)
+    assert q.current.kind == "mood" and q.second is None             # 平时只有一只
+    q.post("approval", 1, [Line("批准？")], buttons=("ok",), on_click=lambda _n: None)
+    assert q.current.kind == "approval" and q.second.kind == "mood"  # 批准占着，心情给第二只
+    for _ in range(40):
+        q.step()
+    assert q.second is None and q.current.kind == "approval"         # 第二只上的也照样过期

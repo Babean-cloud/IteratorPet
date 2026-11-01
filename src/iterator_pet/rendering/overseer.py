@@ -296,7 +296,7 @@ class OverseerGraphics:
         p.restore()
 
     def _draw_mycelium(self, p: QPainter, m: Mycelium):
-        """Mycelium.DrawSprites：长条网格，每点 4 个顶点、半宽 0.5；UpdateColor 从 colorFrom 起渐暗到青黑，末两个顶点纯蓝。"""
+        """Mycelium.DrawSprites：长条网格，每点 4 个顶点、半宽 0.5；UpdateColor 从 colorFrom 起渐暗到青黑（末端渐隐，见下）。"""
         prev = self.connection_pos()
         n_verts = len(m.points) * 4
         tip_dark = _hsl2rgb(0.4888889, 0.5, 0.2)
@@ -313,11 +313,12 @@ class OverseerGraphics:
             pairs.append((v_sub(b, v_mul(n, w)), v_add(b, v_mul(n, w)), i * 4 + 2))
             prev = cur
         for (l0, r0, i0), (l1, r1, _) in zip(pairs, pairs[1:]):
-            if i0 >= n_verts - 4:                   # 这一段的末端是最后两个顶点
-                col = (0.0, 0.0, 1.0)
-            else:
-                col = c_lerp(base[:3], tip_dark, inv_lerp(self.color_from, 1, i0 / (n_verts - 1)))
-            p.setBrush(qc(col, base[3]))
+            f = i0 / (n_verts - 1)
+            col = c_lerp(base[:3], tip_dark, inv_lerp(self.color_from, 1, f))
+            # 游戏把末两个顶点写成纯蓝，但那截在游戏里扎进墙 / 地形里看不见；桌面没有墙，
+            # 露出来就是一截突兀的深蓝。改成最后 1/4 渐隐成透明（用户 2026-11-01）。
+            alpha = base[3] * (1.0 - inv_lerp(0.75, 1.0, f))
+            p.setBrush(qc(col, alpha))
             p.drawPolygon(QPolygonF([QPointF(*l0), QPointF(*r0), QPointF(*r1), QPointF(*l1)]))
 
     def _draw_body(self, p: QPainter):

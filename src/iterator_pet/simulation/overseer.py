@@ -24,7 +24,7 @@ IDLE_TICKS = 40 * 6                     # 没有投影要显示后再悬多久�
 CARRIAGE_CLEAR = 420.0                  # 墙洞离滑车（手臂伸开也够不着）
 ARM_CLEAR = 130.0                       # 墙洞 / 悬停点离机械臂折线、缆线
 HEAD_CLEAR = 200.0                      # 悬停点离人偶头
-HOVER_DEPTH = (100.0, 140.0)            # 悬停点离墙洞往屏幕里多远
+HOVER_DEPTH = (60.0, 85.0)              # 悬停点离墙洞往屏幕里多远（用户 2026-11-01：缩小后柄拉得太长，跟着缩）
 HOVER_SWAY = 30.0                       # 沿墙方向的随机偏移
 WALL_MARGIN = 80.0                      # 墙洞离边角至少这么远
 TRIES = 40
@@ -83,15 +83,21 @@ def _shortfall(hole, body, carriage, head, obstacles) -> float:
     return gap
 
 
-def pick_hole(bounds, carriage, head, obstacles, rng: random.Random):
+SIDE_ORDER = ("right", "left", "top")   # 第二只监视者：没被占的侧面，右边优先；底边留给输入法 / 终端
+
+
+def pick_hole(bounds, carriage, head, obstacles, rng: random.Random, prefer=None, avoid=()):
     """挑钻出的墙洞。返回 (edge, hole, body, inward)；body 是悬停点。
 
     ``obstacles`` 是一组折线（机械臂关节、缆线节点），``carriage`` 是滑车位置。
-    先在滑车所在那条边上试，放不下再试相邻两条，最后一条边也不行就取缺口最小的候选。
+    默认先在滑车所在那条边上试，放不下再试相邻两条，最后一条边也不行就取缺口最小的候选。
+    ``prefer`` 给了就按它的顺序试，跳过 ``avoid`` 里的边（第二只监视者用）。
     """
     home = nearest_edge(carriage, bounds)
+    edges = (home, *ADJACENT[home]) if prefer is None else prefer
+    edges = [e for e in edges if e not in avoid] or [home]
     best = None
-    for edge in (home, *ADJACENT[home]):
+    for edge in edges:
         for _ in range(TRIES):
             hole, body = _candidate(edge, bounds, rng)
             short = _shortfall(hole, body, carriage, head, obstacles)
@@ -104,8 +110,10 @@ def pick_hole(bounds, carriage, head, obstacles, rng: random.Random):
 
 
 class OverseerSim:
-    def __init__(self, seed: int = 11):
+    def __init__(self, seed: int = 11, prefer=None):
         self.rng = random.Random(seed)
+        self.prefer = prefer          # None = 滑车那一面；第二只传 SIDE_ORDER
+        self.avoid: tuple = ()        # 钻出时避开的边（另一只占着的）
         self.phase = HIDDEN
         self.extended = 0.0
         self.edge = "top"
@@ -138,7 +146,7 @@ class OverseerSim:
         if self.phase == HIDDEN:
             if self.wanted:
                 self.edge, self.hole, self.body, self.inward = pick_hole(
-                    bounds, carriage, head, list(obstacles), self.rng)
+                    bounds, carriage, head, list(obstacles), self.rng, self.prefer, self.avoid)
                 self.phase, self._timer = EMERGING, 0
         elif self.phase == EMERGING:
             self._timer += 1

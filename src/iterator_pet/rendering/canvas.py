@@ -23,6 +23,7 @@ from PySide6.QtWidgets import QWidget
 from .bubble import draw_bubble_world
 from .compose import Compositor
 from .marks import draw_errand_mark, draw_screen_mark
+from ..simulation.overseer import SIDE_ORDER
 from .overseer_layer import OverseerLayer
 from .pearls import draw_pearls
 from .renderer import draw_scene
@@ -60,6 +61,8 @@ class PetCanvas(QWidget):
         self._low: QImage | None = None
         self._compositor = Compositor()
         self.overseer = OverseerLayer()
+        # 第二只：只在队列里同时有两样要看时出来，钻没被占的侧面（右边优先）
+        self.overseer2 = OverseerLayer(seed=23, prefer=SIDE_ORDER)
         self.bubble_rect = None               # 上一帧画出的气泡（本窗口坐标），读屏幕时盖掉
         # 命中测试要用的"屏幕上真正画出去的那一份"（帧缓存/alpha 会让重新插值的
         # 结果和屏幕上差一个 tick，拿它去命中会点不准）
@@ -134,7 +137,7 @@ class PetCanvas(QWidget):
         from PySide6.QtCore import QPoint
 
         rects = [self.bubble_rect] if self.bubble_rect is not None else []
-        rects += self.overseer.regions()
+        rects += self.overseer.regions() + self.overseer2.regions()
         if not rects:
             return []
         origin, dpr = self.mapToGlobal(QPoint(0, 0)), self.devicePixelRatioF()
@@ -213,5 +216,6 @@ class PetCanvas(QWidget):
         # 进 draw_scene 会让整屏每一帧都重画（审计 A1/A2 的代价就是托盘卡顿）。
         self._paint_dialogue(painter)
         # 监视者同理：每 tick 都在动，画在屏幕分辨率上（不进缓存帧），不可见时零开销
+        self.overseer2.draw(painter, (float(self.width()), float(self.height())))
         self.overseer.draw(painter, (float(self.width()), float(self.height())))
         painter.end()

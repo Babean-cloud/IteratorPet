@@ -109,3 +109,15 @@ def test_wanting_again_while_retracting_re_emerges():
     sim.want(True)
     _run(sim, 1)
     assert sim.phase == O.EMERGING
+
+
+def test_second_overseer_takes_a_free_side_right_first():
+    import random
+
+    from iterator_pet.simulation.overseer import SIDE_ORDER, pick_hole
+
+    bounds = (0.0, 0.0, 1920.0, 1080.0)
+    edge, *_ = pick_hole(bounds, (0.0, 540.0), (300.0, 540.0), [], random.Random(1), SIDE_ORDER, ("left",))
+    assert edge == "right"
+    edge, *_ = pick_hole(bounds, (1920.0, 540.0), (1600.0, 540.0), [], random.Random(1), SIDE_ORDER, ("right",))
+    assert edge == "left"

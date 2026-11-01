@@ -37,15 +37,15 @@ class _Content:
 # 游戏像素 → 屏幕像素 = 画面缩放 × 这个系数，监视者跟着迭代器一起大小。
 # 用户实机反馈要比效果图（固定 2.5）小 30%：他的缩放是 1.5，所以 2.5×0.7÷1.5
 ZOOM_PER_SCALE = 7 / 6
-SIZE = 0.85
+SIZE = 0.765                            # 用户 2026-11-01：在 0.85 基础上再小 10%
 ROOT_OUTSIDE = 8.0                      # 根点放在屏幕外几像素 = 墙里
 SWAY = 6.0                              # 悬停时的小幅漂浮
 FACING_IDLE, FACING_SHOW = 0.3, 0.55
 
 
 class OverseerLayer:
-    def __init__(self, seed: int = 11):
-        self.sim = OverseerSim(seed)
+    def __init__(self, seed: int = 11, prefer=None):
+        self.sim = OverseerSim(seed, prefer)
         self._seed = seed
         self._graphics: OverseerGraphics | None = None
         self._key: str | None = None
@@ -154,9 +154,11 @@ class OverseerLayer:
         buttons = [replace(b, hot=b.name == hover) for b in content.buttons]
         return Hologram(render_panel(content.width, content.lines, self._color, buttons), seed=content.key)
 
-    def step(self, state, scale: float, size: tuple[float, float], look=None, quiet: bool = False) -> None:
+    def step(self, state, scale: float, size: tuple[float, float], look=None, quiet: bool = False,
+             avoid=()) -> None:
         """每仿真 tick 一次。``state`` 是仿真快照（仿真像素），``look`` 是屏幕像素的视线目标（没有就看人偶头）。
-        ``quiet``：人偶被拖拽 / 全屏勿扰 / 换角色，监视者立刻缩回。"""
+        ``quiet``：人偶被拖拽 / 全屏勿扰 / 换角色，监视者立刻缩回。``avoid``：钻出时别用的边（另一只占着）。"""
+        self.sim.avoid = tuple(avoid)
         if quiet:
             self.sim.retract_now()
         elif self._content is not None:
