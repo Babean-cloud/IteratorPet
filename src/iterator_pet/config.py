@@ -100,6 +100,7 @@ class Config:
     llm_vision_model: str = "deepseek-flash"
     # 委托任务里一眼只读、只在任务文件夹里的命令（Get-ChildItem、Select-String、git status……）不逐条批准
     auto_approve_readonly: bool = True
+    auto_approve_all: bool = False       # 自动模式：委托任务里的命令都直接运行，只有命中危险规则的还会问
     # 本机接口：编程 agent（Claude Code / Codex / MCP）跑完了直接告诉它（brain/bridge.py；只听 127.0.0.1，要口令）
     bridge_enabled: bool = True
     # 外部工具（空 = 在 PATH 里找）：ffmpeg 处理音视频，yt-dlp 读视频网站的链接

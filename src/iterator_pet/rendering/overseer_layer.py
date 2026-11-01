@@ -152,7 +152,8 @@ class OverseerLayer:
             return ScrollPanel(content.width, content.lines[0], content.scroll_text, "点一下展开完整对话窗口",
                                self._color, seed=content.key)
         buttons = [replace(b, hot=b.name == hover) for b in content.buttons]
-        return Hologram(render_panel(content.width, content.lines, self._color, buttons), seed=content.key)
+        return Hologram(render_panel(content.width, content.lines, self._color, buttons), seed=content.key,
+                        color=self._color)
 
     def step(self, state, scale: float, size: tuple[float, float], look=None, quiet: bool = False,
              avoid=()) -> None:

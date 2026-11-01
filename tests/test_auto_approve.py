@@ -71,3 +71,18 @@ def test_runner_auto_runs_and_remembers_approvals(tmp_path):
     assert ran == ["Get-ChildItem", "python run.py"]
     runner._command(task, "python run.py", "再跑一次")
     assert ran[-1] == "python run.py" and "批准过" in task.log[-2], "同一条命令不再问"
+
+
+def test_auto_mode_runs_everything_but_dangerous_commands(tmp_path):
+    from iterator_pet.brain.executor import AgentRunner, command_warnings
+    from iterator_pet.brain.tasks import Task
+
+    ran = []
+    runner = AgentRunner(lambda: None, shell_fn=lambda cmd, cwd, timeout, cancelled: ran.append(cmd) or (0, "ok"),
+                         approval_timeout=0.2, auto_all=lambda: True)
+    task = Task(text="t", mode="workspace-write", workspace=str(tmp_path))
+    runner._command(task, "python build.py", "构建")
+    assert ran == ["python build.py"] and "自动模式" in task.log[-2]
+    assert command_warnings("Remove-Item -Recurse a")
+    assert "拒绝" in runner._command(task, "Remove-Item -Recurse a", "删")      # 危险的照样等批准，没人点就超时拒绝
+    assert ran == ["python build.py"]

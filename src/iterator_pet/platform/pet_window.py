@@ -196,7 +196,8 @@ class PetWindow(PetCanvas):
         # 委托任务：默认自带执行器（executor.py）；装了 DeepSeek Harness 的话多一档"DSH 沙箱只读"
         self.agent = AgentRunner(lambda: self.llm_client(timeout=90.0),
                                  auto_read_only=bool(getattr(config, "auto_approve_readonly", True)),
-                                 web=self._web_tools)
+                                 web=self._web_tools,
+                                 auto_all=lambda: bool(getattr(self.config, "auto_approve_all", False)))
         self.tasks = TaskRunner(find_dsh(getattr(config, "dsh_path", "")),
                                 api_key_fn=lambda: llm_api_key(self.config),
                                 launch=getattr(config, "dsh_launch", "hidden-console"),
@@ -1568,6 +1569,17 @@ class PetWindow(PetCanvas):
         action_click.setChecked(bool(self.click_through))
         action_click.triggered.connect(self.toggle_click_through)
         menu.addAction(action_click)
+
+        action_auto = QAction("自动批准命令（危险的仍会问）", menu)
+        action_auto.setCheckable(True)
+        action_auto.setChecked(bool(getattr(self.config, "auto_approve_all", False)))
+
+        def _toggle_auto(checked: bool) -> None:
+            self.config.auto_approve_all = bool(checked)
+            save(self.config)
+
+        action_auto.triggered.connect(_toggle_auto)
+        menu.addAction(action_auto)
 
         menu.addSeparator()
         action_cursor = QAction("光标特效（杀鼠标时）", menu)

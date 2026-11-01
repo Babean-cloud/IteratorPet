@@ -244,7 +244,7 @@ class AgentRunner:
 
     def __init__(self, client_fn, shell_fn=None, timeout: float = DEFAULT_TIMEOUT,
                  command_timeout: float = COMMAND_TIMEOUT, approval_timeout: float = APPROVAL_TIMEOUT,
-                 auto_read_only: bool = True, web=None):
+                 auto_read_only: bool = True, web=None, auto_all=False):
         self.client_fn = client_fn
         self.web_fn = web if callable(web) else (lambda: web)    # → WebTools / None（None = 不给联网工具）
         self.shell_fn = shell_fn or run_powershell
@@ -252,6 +252,8 @@ class AgentRunner:
         self.command_timeout = command_timeout
         self.approval_timeout = approval_timeout
         self.auto_read_only = auto_read_only     # 一眼只读的命令不逐条批准（is_read_only_command）
+        # 自动模式（用户 2026-11-01 "审批太频繁"）：除了命中 DANGER 的命令都直接跑；可以是开关函数，菜单里随时切
+        self.auto_all = auto_all if callable(auto_all) else (lambda: bool(auto_all))
         self.current: Task | None = None
         self.history: list[Task] = []
         self.available = True
@@ -488,6 +490,9 @@ class AgentRunner:
             return "命令是空的"
         if self.auto_read_only and is_read_only_command(command):
             self._note(task, f"只读，自动放行：{command[:200]}")
+            return self._execute(task, command)
+        if self.auto_all() and not command_warnings(command):
+            self._note(task, f"自动模式，直接运行：{command[:200]}")
             return self._execute(task, command)
         if command in task.approved:
             self._note(task, f"同一条命令这次任务里批准过：{command[:200]}")

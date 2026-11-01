@@ -62,10 +62,10 @@ def make_font(kind: str) -> QFont:
     font = QFont()
     if kind == "mono":
         font.setFamilies(MONO_FAMILIES)
-        font.setPointSizeF(8.5)
+        font.setPixelSize(13)
     else:
         font.setFamilies(UI_FAMILIES)
-        font.setPointSizeF(10.0 if kind == "title" else 9.0)     # 用户 2026-11-01：字小一号（原 12 / 11）
+        font.setPixelSize(15 if kind == "title" else 14)          # 用户 2026-11-01：正文 14 px，标题再大一点
         if kind == "title":
             font.setWeight(QFont.Weight.DemiBold)
     return font
@@ -182,11 +182,16 @@ def octagon(x: float, y: float, w: float, h: float, cut: float) -> QPainterPath:
     return path
 
 
-def draw_backdrop(p: QPainter, width: float, height: float, color, x: float = 0.0, y: float = 0.0) -> None:
-    """面板的底：八边形暗底 + 很淡的色底 + 发散的边（用户 2026-11-01：不要方框硬边，边缘要糊、像投影）。
-    输入投影（QuickBar）的皮肤也用它，两边观感一致。"""
-    g = GLOW
-    shape = octagon(x + g, y + g, width - 2 * g, height - 2 * g, CUT)
+def panel_shape(width: float, height: float, x: float = 0.0, y: float = 0.0) -> QPainterPath:
+    m = EDGE_MARGIN
+    return octagon(x + m, y + m, width - 2 * m, height - 2 * m, CUT)
+
+
+def draw_backdrop(p: QPainter, width: float, height: float, color, x: float = 0.0, y: float = 0.0,
+                  edge: bool = True) -> None:
+    """面板的底：八边形暗底 + 很淡的色底。``edge`` = 顺手画一条静止的细边（输入条皮肤用）；
+    监视者面板的边是每帧画的（``draw_edge``：细线轻微位移、闪烁，照原版）。"""
+    shape = panel_shape(width, height, x, y)
     # 先铺一层半透明的暗底：桌面上的文字 / 花图案透过很淡的色底会和投影字混在一起（用户实测）。
     # Qt 的分层窗口没法"模糊背后的桌面"，压暗是能做到的最接近的办法
     p.save()
@@ -195,19 +200,34 @@ def draw_backdrop(p: QPainter, width: float, height: float, color, x: float = 0.
     p.drawPath(shape)
     p.setBrush(qcolor(color, 0.07))
     p.drawPath(shape)
+    p.restore()
+    if edge:
+        draw_edge(p, width, height, color, random.Random(0), x, y)
+
+
+def draw_edge(p: QPainter, width: float, height: float, color, rng: random.Random,
+              x: float = 0.0, y: float = 0.0) -> None:
+    """原版投影框的边（用户 2026-11-01 给的游戏截图）：一条清楚的细线 + 一条错开几像素的淡残影，
+    两条都随帧轻微位移；偶尔一段缺掉。不糊。"""
+    p.save()
     p.setBrush(Qt.BrushStyle.NoBrush)
-    for width_px, alpha in ((2 * g, 0.06), (1.4 * g, 0.10), (0.8 * g, 0.16)):     # 由宽到窄叠几层 = 糊开的光边
-        p.setPen(QPen(qcolor(color, alpha), width_px))
-        p.drawPath(shape)
-    pen = QPen(qcolor(color, 0.55, 1.1), 0.9)
-    pen.setDashPattern([28, 3, 9, 2])                       # 细亮线断续，不是一条完整的硬框
+    main = panel_shape(width, height, x + rng.uniform(-0.8, 0.8), y + rng.uniform(-0.8, 0.8))
+    pen = QPen(qcolor(color, rng.uniform(0.75, 0.95), 1.15), 1.2)
+    if rng.random() < 0.35:                                  # 偶尔断一截
+        gap = rng.uniform(6, 30)
+        pen.setDashPattern([rng.uniform(80, 200) / 1.2, gap / 1.2])
     p.setPen(pen)
-    p.drawPath(shape)
+    p.drawPath(main)
+    ghost = panel_shape(width, height, x + rng.choice((-1, 1)) * rng.uniform(1.5, 3.0),
+                        y + rng.choice((-1, 1)) * rng.uniform(1.0, 2.5))
+    p.setPen(QPen(qcolor(color, rng.uniform(0.3, 0.5)), 1.0))
+    p.drawPath(ghost)
     p.restore()
 
 
-GLOW = 5.0                              # 光边糊开的宽度（面板四周留这么多）
+EDGE_MARGIN = 5.0                       # 面板四周留给边线位移的余量
 CUT = 12.0                              # 八边形切角
+EDGE_VARIANTS, EDGE_HOLD = 8, 3         # 边线预先画几种位移；每种停几个 tick 再换
 
 
 def _begin(width: int, height: int, color) -> tuple[QImage, QPainter]:
@@ -216,7 +236,7 @@ def _begin(width: int, height: int, color) -> tuple[QImage, QPainter]:
     p = QPainter(img)
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
     p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
-    draw_backdrop(p, width, height, color)
+    draw_backdrop(p, width, height, color, edge=False)      # 边由 Hologram 每帧加（会动）
     return img, p
 
 
@@ -329,9 +349,11 @@ class Hologram:
 
     scrolling = False
 
-    def __init__(self, image: QImage, seed: int = 0):
+    def __init__(self, image: QImage, seed: int = 0, color=None):
         self.image = image
         self.seed = seed
+        self.color = color                       # 给了才画会动的边（draw_edge）
+        self._edged: dict[tuple, QImage] = {}
         self._calm: QImage | None = None
         self._strong: dict[int, QImage] = {}
         self._glitch: dict[int, QImage] = {}
@@ -356,6 +378,29 @@ class Hologram:
     def frame(self, age: int, leaving: int | None = None, offset: float = 0.0) -> tuple[QImage, float]:
         """返回 (这一帧的图, 不透明度)。``age`` 出现后过了几个 tick；``leaving`` 开始消失后过了几个 tick（没消失 = None）。
         ``offset`` 只给滚动面板用，普通面板忽略。"""
+        image, opacity = self._frame(age, leaving, offset)
+        return self.with_edge(image, age if leaving is None else leaving), opacity
+
+    def with_edge(self, image: QImage, tick: int, cache: bool = True) -> QImage:
+        """在这一帧上加会动的细边；同一张底图的几种位移缓存着（滚动面板每帧新图，不缓存）。"""
+        if self.color is None:
+            return image
+        variant = (tick // EDGE_HOLD + self.seed) % EDGE_VARIANTS
+        key = (image.cacheKey(), variant)
+        if cache and key in self._edged:
+            return self._edged[key]
+        out = QImage(image)
+        p = QPainter(out)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        draw_edge(p, out.width(), out.height(), self.color, random.Random(self.seed * 131 + variant))
+        p.end()
+        if cache:
+            if len(self._edged) > 64:
+                self._edged.clear()
+            self._edged[key] = out
+        return out
+
+    def _frame(self, age: int, leaving: int | None = None, offset: float = 0.0) -> tuple[QImage, float]:
         if leaving is not None:
             if leaving >= STRONG_TICKS:
                 return self._strong_frame(0), 0.0
@@ -409,7 +454,7 @@ class ScrollPanel(Hologram):
         self._head_h = sum(r[2] for r in self._head) + PAD_Y
         self._height = self._head_h + self.view_h + sum(r[2] for r in self._foot) + PAD_Y
         self._width = width
-        super().__init__(self._compose(0.0, scan=False), seed)
+        super().__init__(self._compose(0.0, scan=False), seed, color)
 
     @property
     def max_offset(self) -> float:
@@ -450,7 +495,8 @@ class ScrollPanel(Hologram):
     def frame(self, age: int, leaving: int | None = None, offset: float = 0.0) -> tuple[QImage, float]:
         if leaving is not None or age < STRONG_TICKS:
             return super().frame(age, leaving)
-        return self._compose(offset), 0.9 + 0.06 * math.sin(age * 0.11 + self.seed)
+        return (self.with_edge(self._compose(offset), age, cache=False),
+                0.9 + 0.06 * math.sin(age * 0.11 + self.seed))
 
 
 def place_panel(w: float, h: float, body, head, inward, screen) -> QRectF:
