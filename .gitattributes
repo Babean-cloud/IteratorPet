@@ -1,0 +1,8 @@
+# 统一换行：仓库里一律 LF（2026-11-02：有会话把整文件改成 CRLF，git 把整文件当改动，并行改同一文件时没法合并）
+* text=auto eol=lf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.png binary
+*.ico binary
+*.jpg binary
+*.wav binary
