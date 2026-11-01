@@ -179,7 +179,7 @@ class Director:
                  wall=datetime.now, talkativeness: float = 0.5, chatlog=None, context=None,
                  pearls=None, errands=None, watcher=None, sensors=None,
                  on_task_request=None, task_workspace: str | None = None,
-                 habits=None, habit_state=None, habit_scheduler=None):
+                 habits=None, habit_state=None, habit_scheduler=None, habit_runner=None):
         from . import perception as P
 
         self._new_stats = P.new_stats
@@ -213,6 +213,10 @@ class Director:
         self.habit_scheduler = habit_scheduler     # 定时 / 事件触发（habits/scheduler.py）
         self._habit_inline: list = []              # 到点、等着开口的 inline 习惯
         self._habit_tasks: list = []               # 到点、等着后台跑的 task 习惯（runner.py）
+        self.habit_runner = habit_runner           # task 类习惯的后台运行（habits/runner.py）
+        self.task_busy_fn = None                   # 委托任务在跑吗：在跑就让习惯任务排队（委托优先）
+        self.on_habit_output = None                # (标题, 全文) → 长结果用投影给用户看
+        self._habit_say: list[tuple[str, bool, str]] = []   # 习惯任务跑完、等着开口的话 (话, 是否 direct, 原因)
         self._habit_inflight = None                # 正在为哪个 inline 习惯请求（apply 时要用）
         self._habit_budget_day: str | None = None  # 全局额度用完的提示今天说过没有
         self._back_pending = False                 # 用户刚回来（user_back 事件，下次检查习惯时用掉）
@@ -464,6 +468,7 @@ class Director:
         self._drain_results(sim)
         self._drain_errands(sim)
         self._drain_habits(sim)
+        self._drain_habit_runs(sim)
         notice = self._task_notice
         if notice is not None and now - notice[1] > TASK_NOTICE_WAIT:
             # 任务结束了，模型那边迟迟没开口（打盹 / 请求失败 / 被别的事挤掉）：本地说一句，别让人干等
@@ -490,7 +495,7 @@ class Director:
             if regular_perceive:
                 self._fire_reminders(sim)
                 self._check_errands(sim)
-                self._check_habits()
+                self._check_habits(sim)
                 self.remarks.settle(self.wall().timestamp(), dt=PERCEIVE_EVERY)
                 self._tick_relation(now)
 
@@ -1378,7 +1383,7 @@ class Director:
             self.chatlog.add("system", f"习惯「{habit.title}」{HABIT_OPS[op]}")
         self._say(sim, HABIT_LINES[key][op], direct=True, why="你要求动习惯")
 
-    def _check_habits(self) -> None:
+    def _check_habits(self, sim=None) -> None:
         """跟着感知节拍：哪些习惯到点了。inline 排队等开口，task 排队等后台跑。"""
         if self.habit_scheduler is None:
             return
@@ -1391,6 +1396,72 @@ class Director:
             if self.habit_state is not None:
                 self.habit_state.mark_run(due.name, due.id, due.scheduled if due.trigger["type"] == "time" else None)
             queue_.append(due)
+        if sim is not None:
+            self._pump_habit_tasks(sim)
+
+    def _pump_habit_tasks(self, sim) -> None:
+        """排队的 task 习惯一次开一个。委托任务在跑就等着（用户当面交代的优先）；全局额度用完就先停到明天（H10）。"""
+        runner = self.habit_runner
+        if runner is None or not self._habit_tasks:
+            return
+        if runner.busy or (self.task_busy_fn is not None and self.task_busy_fn()):
+            return
+        if self.over_budget:
+            self._habit_tasks.clear()
+            self._habit_over_budget(sim)
+            return
+        due = self._habit_tasks.pop(0)
+        try:
+            habit = self.habits.peek(due.name)
+        except Exception as exc:                       # noqa: BLE001
+            _log(f"习惯 {due.name} 读不了：{exc}")
+            return
+        if not habit.enabled or (self.habit_state is not None and self.habit_state.paused(due.name)):
+            return
+        if self.habit_state is not None and self.habit_state.day_tokens(due.name) >= habit.config["budget"]["day_tokens"]:
+            self.habits.append_log(due.name, {"trigger": due.id, "kind": "task", "result": "over_budget",
+                                              "summary": "今天这个习惯的额度用完了，不再跑"})
+            return
+        self.habits.commit(f"运行前：{due.name}", f"habits/{due.name}")           # 跑之前先记一次快照
+        if runner.start(habit, due.trigger, sim.appearance.key) is None:
+            self.habits.append_log(due.name, {"trigger": due.id, "kind": "task", "result": "skipped",
+                                              "summary": "没有可用的 API Key，没能开跑"})
+            return
+        self.log(f"习惯「{habit.title}」在后台开跑（{due.id}）")
+
+    def _drain_habit_runs(self, sim) -> None:
+        runner = self.habit_runner
+        if runner is not None:
+            for run in runner.take_finished():
+                self._habit_run_done(run)
+        if self._habit_say and not self.quiet and not self.away and not self.muted_today \
+                and not sim.dialogue.text:
+            text, direct, why = self._habit_say.pop(0)
+            self._say(sim, text, direct=direct, why=why)
+
+    def _habit_run_done(self, run) -> None:
+        for usage in run.usages:
+            if self.usage is not None:
+                self.usage.record(usage, source="habit")
+        ok = run.state != "failed"
+        self.habits.append_log(run.name, {"trigger": run.trigger_id, "kind": "task", "tokens": run.tokens,
+                                          "steps": run.steps, "result": run.state, "summary": run.summary[:200],
+                                          "files": run.files})
+        self.habits.commit(f"运行：{run.name}（{run.state}）", f"habits/{run.name}")
+        self.log(f"习惯「{run.title}」跑完了（{run.state}）：{run.summary[:40]}")
+        if self.chatlog is not None and run.state != "cancelled":
+            self.chatlog.add("system", f"习惯「{run.title}」{'跑完了' if ok else '没跑成'}：{run.summary[:200]}")
+        if self.habit_state is not None:
+            self.habit_state.add_tokens(run.name, run.tokens)
+            if run.state != "cancelled" and self.habit_state.record_result(run.name, ok) >= 3:
+                self.habit_state.set_paused(run.name, "连续失败 3 次，自动暂停了")
+                self._habit_say.append((f"……「{run.title}」连着失败三回，我先停了它。", True, "习惯连续失败，自动暂停了"))
+        if run.state == "done" and run.say:
+            self._habit_say.append((run.say, run.priority == "high", f"习惯「{run.title}」跑完了"))
+        elif run.state == "over_budget":
+            _log(f"习惯 {run.name}：{run.summary}")
+        if run.summary and len(run.summary) > 40 and self.on_habit_output is not None and run.state == "done":
+            self.on_habit_output(run.title, run.summary)
 
     def _habit_over_budget(self, sim) -> None:
         """全局每日额度用完：要调模型的习惯先停到明天，每天只说一次（H10）。"""
