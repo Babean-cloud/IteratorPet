@@ -355,13 +355,15 @@ class PetWindow(PetCanvas):
             self._timer.setInterval(interval)
 
     def _request_paint(self) -> None:
-        """只重画这一帧和上一帧占的区域；算不出（电光 / 杀鼠标 / 刚整屏画过）就整屏。"""
-        rect = self.dirty_rect()
-        previous, self._last_dirty = getattr(self, "_last_dirty", None), rect
-        if rect is None or previous is None:
-            self.update()
-        else:
-            self.update(rect.united(previous))
+        """帧缓存按仿真 tick 记（``_frame_stamp``），仿真 40 TPS、帧率 60：每 3 帧里有 1 帧和上一帧一模一样，
+        照样整窗交给系统合成一遍。人偶这层没变、又没有每帧都在动的监视者 / 字幕时，这一帧直接跳过。
+
+        试过只重画变了的矩形（``update(rect)``）：透明分层窗口局部提交时边缘会闪出矩形框（用户 2026-11-01 实测），
+        省得也不多，已撤回，一律整窗。"""
+        if (self._frame_stamp() == self._frame_key and not self.overseer.visible
+                and not self.overseer2.visible and not self.simulation.dialogue.text):
+            return
+        self.update()
 
     def _update_hit_passthrough(self) -> None:
         """只有滑车和人偶（头/身体）能点，其余地方一律让鼠标穿过去。

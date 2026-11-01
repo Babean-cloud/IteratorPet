@@ -103,29 +103,3 @@ def test_buttons_follow_the_panel_when_a_redraw_makes_it_taller():
     assert rect.height() > before
     start = button_rects(int(rect.width()), int(rect.height()), buttons)[1].center()
     assert layer.button_at((rect.x() + start.x(), rect.y() + start.y())) == "start"
-
-
-def test_dirty_rect_covers_the_pet_only_and_falls_back_to_full_screen_for_sparks():
-    from dataclasses import replace
-
-    from PySide6.QtWidgets import QApplication
-
-    from iterator_pet.rendering.canvas import PetCanvas
-    from iterator_pet.simulation.state import SimulationState
-
-    import pytest
-
-    app = QApplication.instance() or QApplication([])
-    if not isinstance(app, QApplication):
-        pytest.skip("同进程里先建了 QGuiApplication，QWidget 建不了")
-    sim = SimulationState((0.0, 0.0, 1280.0, 690.0), warmup=0)
-    canvas = PetCanvas(sim, scale=1.5)
-    canvas.resize(1920, 1035)
-    state = sim.interpolate(1.0)
-    canvas._drawn_state = replace(state, halo_sparks=[(p, h, 0.0) for p, h, _l in state.halo_sparks])
-    rect = canvas.dirty_rect()
-    head = state.head
-    assert rect is not None and rect.contains(int(head[0] * 1.5), int(head[1] * 1.5))
-    assert rect.width() * rect.height() < 0.6 * 1920 * 1035              # 明显小于整屏
-    canvas._drawn_state = replace(state, halo_sparks=[(p, h, 1.0) for p, h, _l in state.halo_sparks])
-    assert canvas.dirty_rect() is None                                   # 电光亮着：整屏
