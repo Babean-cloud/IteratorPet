@@ -315,7 +315,7 @@ class Perception:
         self._found_at = -1e9                         # 上次认出新行的时间（found_level）
         self.ocr_error: str | None = None
         self.ocr_version = 0          # 每认出一次新文字 +1
-        # 基线计数（dev/notes/attention-capture-design.md §5）；director 每小时取走并清零
+        # 基线计数（dev/harness/attention-capture-design.md §5）；director 每小时取走并清零
         self.stats = new_stats()
         # 已经发给模型的行：(hwnd, title) -> (规范化后的行集合, 上次发出的时间)
         self._sent: dict[tuple[int, str], tuple[set[str], float]] = {}

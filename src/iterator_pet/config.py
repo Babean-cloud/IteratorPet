@@ -88,7 +88,7 @@ class Config:
     drop_shadow: bool = True
     # 收着的珍珠绕着人偶漂（最多 5 颗）
     show_pearls: bool = True
-    # 界面风格：overseer = 监视者全息投影（心情 / 任务进度等），windows = 一律走普通窗口（dev/notes/overseer-design.md §3.5）
+    # 界面风格：overseer = 监视者全息投影（心情 / 任务进度等），windows = 一律走普通窗口（dev/监视者/overseer-design.md §3.5）
     ui_style: str = "overseer"
     overseer_scroll_speed: float = 32.0     # 长结果投影的滚动速度（字/秒）
     # 原版音效（platform/sound.py）：迭代器说话的哔哔啵啵、字幕轻响、机械臂 / 底座 / 电光 / 放电

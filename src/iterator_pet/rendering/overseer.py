@@ -1,7 +1,7 @@
 """监视者（Overseer）的画法，照游戏 ``OverseerGraphics`` + ``CoralBrain.Mycelium`` 的 IL 逐条移植。
 
 坐标是"游戏像素"、屏幕朝向（y 向下）；调用方用 ``painter.scale`` 放大到桌面上。
-公式出处、和原作不一样的地方见 dev/notes/overseer-design.md §2.4。
+公式出处、和原作不一样的地方见 dev/监视者/overseer-design.md §2.4。
 
 用法::
 
