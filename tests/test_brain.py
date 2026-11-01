@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import pytest
 import json
 import time
 from datetime import date, datetime
@@ -116,6 +117,7 @@ def test_grabbing_cancels_directive():
     assert not sim.direct((200.0, 200.0)), "拖拽中不接指令"
 
 
+@pytest.mark.slow
 def test_territory_parks_puppet_and_carriage_on_that_side():
     for side in ("left", "right"):
         sim = SimulationState(WIDE)

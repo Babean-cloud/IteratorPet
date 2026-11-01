@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 import json
 import time
 
@@ -42,6 +43,7 @@ def _settle(director, sim):
 
 
 # -- 换角色动画 ------------------------------------------------------------------------
+@pytest.mark.slow
 def test_swap_swings_out_offscreen_then_back_with_new_look():
     for seed in (1234, 7, 99):
         sim = SimulationState(WIDE, seed=seed)

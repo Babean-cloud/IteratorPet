@@ -29,6 +29,9 @@ iterator-pet-launch = "iterator_pet.launcher:main"
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+markers = ["slow: 长时间物理仿真，只在全量档跑"]
+# 默认快速档：6 进程并行、跳过 slow；全量档 pytest -m "slow or not slow"
+addopts = "-n 6 -m \"not slow\""
 
 [tool.setuptools.packages.find]
 where = ["src"]

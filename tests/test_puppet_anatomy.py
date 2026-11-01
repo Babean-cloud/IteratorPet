@@ -5,6 +5,7 @@ coverage here at all, which is how a 20 px tether borrowed from Looks to the Moo
 and a 5 px knee from the same branch survived two rounds of "looks fine to me".
 """
 
+import pytest
 from math import atan2, degrees, hypot
 
 from iterator_pet.simulation import constants as C
@@ -66,6 +67,7 @@ def test_foot_sits_exactly_on_the_ten_pixel_tether():
     assert 3.0 < mean < 5.5, f"parked mean lateral offset {mean:.2f}, expected ~4.47"
 
 
+@pytest.mark.slow
 def test_body_axis_hangs_down_instead_of_laying_flat():
     """oracle.cs:294 pulls ``bodyChunks[1]`` toward ``getTo - GetToDir * 9``.
 
@@ -120,6 +122,7 @@ def test_body_axis_hangs_down_instead_of_laying_flat():
     assert median(parked + drifting) < 30.0
 
 
+@pytest.mark.slow
 def test_head_sits_on_top_of_the_body_and_leans_toward_the_gaze():
     """og.cs:1621-1632, in the source's order.
 

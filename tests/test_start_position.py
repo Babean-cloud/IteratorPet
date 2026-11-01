@@ -1,5 +1,6 @@
 """重启后从上次的位置出来，而不是每次都在默认位置。"""
 
+import pytest
 from types import SimpleNamespace
 
 from iterator_pet.platform.pet_window import saved_position
@@ -8,6 +9,7 @@ from iterator_pet.simulation.state import SimulationState
 WIDE = (0.0, 0.0, 1138.0, 608.0)
 
 
+@pytest.mark.slow
 def test_starts_where_it_was_left():
     default = SimulationState(WIDE, warmup=0).creature.chunk0
     sim = SimulationState(WIDE, warmup=0, start=(200.0, 180.0))

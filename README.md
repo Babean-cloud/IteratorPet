@@ -327,7 +327,10 @@ python -m iterator_pet.launcher        # 发布版入口（带首次运行向导
 
 游戏不在默认位置时：`$env:RAINWORLD_DIR = "D:\SteamLibrary\steamapps\common\Rain World"`
 
-- **测试**：`python -m pip install -e .[dev]`，然后 `python -m pytest -n 6`。
+- **测试**：`python -m pip install -e .[dev]`，然后：
+  - 快速档：`pytest`（6 进程并行，跳过标了 `slow` 的长时间物理仿真）；
+  - 全量档：`pytest -m "slow or not slow"`；
+  - 单个文件：`pytest tests/test_x.py -n 0`（免去起 6 个进程）。
 - **打包**：`python packaging/build.py`，产物在 `dist/启动/`。
   打完跑一下 `dist\启动\启动.exe --selftest 结果.txt`，确认拼音、文档读取、音频这些容易漏数据文件的模块在包里能用。
 - **对话评测**：`python tools/eval_dialogue.py --dry` 只看 prompt 大小；去掉 `--dry` 用真模型跑固定场景（会花一点 token）。
