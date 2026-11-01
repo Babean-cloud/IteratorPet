@@ -131,6 +131,11 @@ class Config:
     dsh_wiring: str = "cmd-stdin"
     # 对话窗口的全局快捷键（Ctrl/Alt/Shift/Win + 字母/数字/F1-F12/Space）
     chat_hotkey: str = "Ctrl+Alt+I"
+    # 习惯系统（brain/habits/）：工作区（空 = %USERPROFILE%\IteratorWS）；便宜时段 "00:30-08:30"（空 = 准点跑）；
+    # 习惯没写预算时的默认值（每次运行 token / 步数，每天 token）
+    workspace_dir: str = ""
+    cheap_hours: str = ""
+    habit_default_budget: dict = field(default_factory=lambda: {"run_tokens": 30000, "run_steps": 20, "day_tokens": 80000})
     # 更新提示：一天最多查一次 GitHub 最新 Release（匿名 GET，不带本机信息）
     update_check: bool = True
     update_checked_at: float = 0.0
