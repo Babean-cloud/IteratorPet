@@ -41,6 +41,8 @@ DEFAULT_OUT = ROOT / "dist"
 
 EXCLUDES = (                             # lxml 不能排除：python-docx（读写 Word）离不开它
     "scipy", "pandas", "matplotlib", "cryptography",
+    # magika + onnxruntime 约 40 MB：markitdown 只拿它按内容猜文件类型，我们总按扩展名读，用替身（brain/docs.py）
+    "magika", "onnxruntime",
     "PyQt5", "PyQt6", "PySide2", "tkinter", "IPython", "jedi",
 )
 
@@ -80,10 +82,9 @@ def build(out_dir: Path) -> None:
         "--collect-all", "archspec",
         # 地点簿的模糊匹配：pypinyin 的拼音表是 json 数据，不收进来 import 就炸
         "--collect-data", "pypinyin",
-        # 读课件（markitdown，可选依赖 [docs]）：magika 的识别模型、docx / pptx 的模板、pdfminer 的 cmap 都是数据文件。
+        # 读课件（markitdown，可选依赖 [docs]）：docx / pptx 的模板、pdfminer 的 cmap 都是数据文件。
         # 没装 [docs] 时这些 collect 只会警告，不影响构建
         "--collect-all", "markitdown",
-        "--collect-all", "magika",
         "--collect-data", "docx",
         "--collect-data", "pptx",
         "--collect-data", "pdfminer",

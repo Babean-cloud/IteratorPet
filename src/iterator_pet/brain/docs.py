@@ -21,8 +21,32 @@ class DocError(RuntimeError):
     """给模型看的失败原因（中文，一句话）。"""
 
 
+def _ensure_magika() -> None:
+    """markitdown 模块顶上 ``import magika``，只拿它按内容猜文件类型。我们总是按真实路径读、扩展名已知，用不上；
+    magika 连带 onnxruntime 占发布包约 40 MB，所以打包时不带它（packaging/build.py）。**一律用替身**：
+    猜测返回"跳过"，markitdown 就按扩展名走。就算装了真的也不去 import——加载 onnxruntime 要好几秒，
+    第一次读文档会白等（并行测试里还会超时）。别处已经导入了真的就不动它。"""
+    import sys
+
+    if sys.modules.get("magika") is not None:
+        return
+    import types
+
+    class Magika:
+        def identify_stream(self, stream):
+            return types.SimpleNamespace(status="skipped")
+
+        def identify_path(self, path):
+            return types.SimpleNamespace(status="skipped")
+
+    stub = types.ModuleType("magika")
+    stub.Magika = Magika
+    sys.modules["magika"] = stub
+
+
 def read_document(path: str | Path) -> str:
     """文档 → Markdown 文本。失败抛 ``DocError``。"""
+    _ensure_magika()
     try:
         from markitdown import MarkItDown
     except ImportError as exc:

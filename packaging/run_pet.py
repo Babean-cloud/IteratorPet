@@ -58,13 +58,13 @@ def _selftest(out: Path) -> int:
 
     def docs():
         import docx
-        from markitdown import MarkItDown
+        from iterator_pet.brain.docs import read_document     # 走桌宠真正用的那条路（包里没 magika，用替身）
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "t.docx"
             d = docx.Document()
             d.add_paragraph("迭代器自检")
             d.save(path)
-            return MarkItDown().convert(str(path)).text_content.strip()[:20]
+            return read_document(path).strip()[:20]
 
     def audio():
         from PySide6.QtMultimedia import QAudioSink, QMediaDevices  # noqa: F401

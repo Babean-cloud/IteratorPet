@@ -359,3 +359,25 @@ def test_missing_optional_docs_dependency_is_a_readable_error(tmp_path, monkeypa
     assert _wait(lambda: task.finished) and task.state == "done"
     tool = [m["content"] for m in client.seen[-1] if m["role"] == "tool"][0]
     assert "没装 markitdown" in tool
+
+
+
+def test_reads_docx_without_magika(tmp_path, monkeypatch):
+    """发布包不带 magika / onnxruntime（约 40 MB）：没有它也要能读 Word。"""
+    import sys
+
+    import pytest
+
+    docx = pytest.importorskip("docx")
+    pytest.importorskip("markitdown")
+    from iterator_pet.brain import docs
+
+    for name in [m for m in sys.modules if m.startswith(("magika", "markitdown"))]:
+        monkeypatch.delitem(sys.modules, name)
+    monkeypatch.setitem(sys.modules, "magika", None)          # import magika → ImportError，和发布包里一样
+    path = tmp_path / "t.docx"
+    d = docx.Document()
+    d.add_paragraph("第三讲 变换编码")
+    d.save(path)
+    assert "变换编码" in docs.read_document(path)
+    assert sys.modules["magika"].Magika().identify_stream(None).status == "skipped", "用的是替身"
