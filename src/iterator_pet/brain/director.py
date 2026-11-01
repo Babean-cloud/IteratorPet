@@ -949,12 +949,16 @@ class Director:
             compact["pearl"] = {k: obs["pearl"][k] for k in ("title", "kind")}
         brief = json.dumps(compact, ensure_ascii=False)
         messages = [{"role": "system", "content": system_prompt(sim.appearance.key)}]
+        catalogue = self.habits.catalogue() if self.habits is not None else ""   # 习惯目录：不常变，吃缓存
         if self.memory is not None:
             chat_lines = [chat_line(e) for e in window]
             pearl_lines = self.pearls.prompt_lines() if self.pearls is not None else None
             messages.append({"role": "system", "content": self.memory.prompt_block(
                 self.talkativeness, chat_lines, pearl_lines)
-                + "\n" + self.relation.prompt_text(sim.appearance.key)})
+                + "\n" + self.relation.prompt_text(sim.appearance.key)
+                + ("\n" + catalogue if catalogue else "")})
+        elif catalogue:
+            messages.append({"role": "system", "content": catalogue})
         messages.extend(self.context.turns)
         messages.append(user_msg)
 
@@ -988,7 +992,8 @@ class Director:
             if w is not None and not w.private:
                 mode, key = self.screen_vision_mode, (w.hwnd, w.title)
                 look = lambda: p.capture_vision(mode, key)       # noqa: E731
-        return ChatTools(p, self.chatlog, self.pearls, self.reminders, self.errands, self.memory, look)
+        return ChatTools(p, self.chatlog, self.pearls, self.reminders, self.errands, self.memory, look,
+                         habits=self.habits)
 
     def _run(self, reason: str, messages: list[dict], brief: str, fold_upto, image=None,
              user_text: str | None = None, tools=None) -> None:
@@ -1246,18 +1251,38 @@ class Director:
                 self._habit_edit(sim, edit, user_text)
             else:
                 _log(f"丢弃 habit_edit（reason={reason}，不是用户亲口要求的）：{str(edit)[:80]}")
+        use = action.get("habit_use")
+        if isinstance(use, dict):
+            if reason == "chat" and user_text:
+                self._habit_use(sim, use, user_text)
+            else:
+                _log(f"丢弃 habit_use（reason={reason}）")
         suggest = action.get("habit_suggest")
         if reason == "task_done" and isinstance(suggest, str) and suggest.strip():
             self._say(sim, suggest.strip(), direct=True, why="觉得这件事会反复出现")
 
     def _habit_lookup(self, name: str):
-        """按名字或标题找习惯；没写名字而只有一个习惯时就是它。"""
-        habits = self.habits.list()
-        name = (name or "").strip()
-        for habit in habits:
-            if name and name in (habit.name, habit.title):
-                return habit
-        return habits[0] if not name and len(habits) == 1 else None
+        return self.habits.find(name)
+
+    def _habit_use(self, sim, use: dict, user_text: str) -> None:
+        """chat 触发的 inline：把这句话记进习惯的 notes。程序执行，不额外请求模型（§5.1）。"""
+        habit = self._habit_lookup(str(use.get("name") or ""))
+        trigger = next((t for t in habit.triggers("chat") if t["id"] == use.get("trigger")), None) if habit else None
+        if habit is None or trigger is None or not habit.enabled:
+            _log(f"habit_use 对不上（{str(use)[:80]}）")
+            return
+        text = use.get("input") if isinstance(use.get("input"), str) and use["input"].strip() else user_text
+        try:
+            path = self.habits.append_note(habit.name, self.habits.note_file(habit), text.strip()[:400])
+        except OSError as exc:
+            _log(f"habit_use 写不进去：{exc}")
+            return
+        self.habits.append_log(habit.name, {"trigger": trigger["id"], "kind": "inline", "tokens": 0, "steps": 0,
+                                            "result": "ok", "summary": text.strip()[:80], "files": [path]})
+        if self.habit_state is not None:
+            self.habit_state.mark_run(habit.name, trigger["id"], self.wall().timestamp())
+        self.habits.commit(f"记一笔：{habit.name}", f"habits/{habit.name}/notes", f"habits/{habit.name}/log.jsonl")
+        self.log(f"习惯「{habit.title}」记了一笔：{text.strip()[:40]}")
 
     def _habit_edit(self, sim, edit: dict, user_text: str) -> None:
         from .habits.store import HabitError

@@ -10,7 +10,9 @@
 
 from __future__ import annotations
 
-TOOLS = ("read_screen", "look_screen", "recall", "reminders", "place")
+import json
+
+TOOLS = ("read_screen", "look_screen", "recall", "reminders", "place", "habit")
 MAX_ROUNDS = 2              # 最多查几轮（加上最后那次回复，一次被叫醒最多 3 次请求）
 MAX_PER_ROUND = 2           # 一轮最多几个工具
 RESULT_CHARS = 2400         # 单个结果最多多少字（屏幕文字可能很长）
@@ -33,13 +35,14 @@ class ChatTools:
     """主线程里建（拿好引用和当前窗口），工作线程里调。"""
 
     def __init__(self, perception=None, chatlog=None, pearls=None, reminders=None, errands=None,
-                 memory=None, look=None):
+                 memory=None, look=None, habits=None):
         self.perception = perception
         self.chatlog = chatlog
         self.pearls = pearls
         self.reminders = reminders
         self.errands = errands
         self.memory = memory
+        self.habits = habits                 # HabitStore（可以没有）
         self.look = look                     # () -> JPEG bytes | None；没开看图就是 None
         self.looked = False
 
@@ -112,3 +115,19 @@ class ChatTools:
             return "没有地点簿。"
         hits = self.memory.place_candidates(name)
         return str(hits) if hits else f"地点簿里没有像「{name}」的。"
+
+    def _habit(self, item) -> str:
+        if self.habits is None:
+            return "没有习惯可查。"
+        from .habits.store import HabitError
+
+        found = self.habits.find(str(item.get("name") or "").strip()[:60])
+        if found is None:
+            return "没有这个习惯。"
+        try:
+            habit = self.habits.peek(found.name)         # 只读，不碰 git（这里在工作线程）
+        except HabitError as exc:
+            return f"这个习惯读不了：{exc}"
+        return (f"【SKILL.md】\n{(habit.path / 'SKILL.md').read_text(encoding='utf-8')}\n"
+                f"【habit.json】\n{json.dumps(habit.config, ensure_ascii=False)}\n"
+                "【最近的原话】\n" + "\n".join(habit.requests))

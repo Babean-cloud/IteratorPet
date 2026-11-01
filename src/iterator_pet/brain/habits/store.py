@@ -366,6 +366,8 @@ class HabitStore:
         self.errors: dict[str, str] = {}            # list() 时跳过的坏习惯：名字 → 原因
         self._ready = False
         self._git: str | None = None
+        self._cat_sig: list | None = None
+        self._cat_text = ""
 
     # -- 路径
     @property
@@ -484,6 +486,67 @@ class HabitStore:
             except HabitError as exc:
                 self.errors[folder.name] = str(exc)
         return out
+
+    def find(self, name: str) -> Habit | None:
+        """按名字或标题找；没写名字而只有一个习惯时就是它。"""
+        habits = self.list()
+        name = (name or "").strip()
+        for habit in habits:
+            if name and name in (habit.name, habit.title):
+                return habit
+        return habits[0] if not name and len(habits) == 1 else None
+
+    def peek(self, name: str) -> Habit:
+        """只读（不碰 git）：给工作线程里的查询用。"""
+        return self._load(name)
+
+    def catalogue(self) -> str:
+        """【习惯目录】：启用的习惯每个一行，放进记忆那条 system 消息。文件没动就不重读（按修改时间缓存）。"""
+        if not self.habits_dir.is_dir():
+            return ""
+        sig = []
+        for folder in sorted(self.habits_dir.iterdir()):
+            for fname in ("SKILL.md", "habit.json"):
+                try:
+                    sig.append((folder.name, fname, (folder / fname).stat().st_mtime_ns))
+                except OSError:
+                    pass
+        if self._cat_sig == sig:
+            return self._cat_text
+        lines = []
+        for habit in self.list():
+            if not habit.enabled:
+                continue
+            line = f"{habit.name}｜{habit.title}｜{habit.description}"
+            chats = [f"{t['id']}：{t['when']}" for t in habit.triggers("chat")]
+            if chats:
+                line += "｜chat 触发 " + "；".join(chats)
+            lines.append(line)
+        self._cat_sig = sig
+        self._cat_text = "【习惯目录】（名字｜标题｜说明）\n" + "\n".join(lines) if lines else ""
+        return self._cat_text
+
+    def note_file(self, habit: Habit) -> str:
+        """记一笔写哪个文件：正文里第一个 notes/xxx.md；没有就是 inbox.md。"""
+        match = re.search(r"notes/([A-Za-z0-9_\-]+\.md)", habit.body)
+        return match.group(1) if match else "inbox.md"
+
+    def append_note(self, name: str, filename: str, text: str) -> str:
+        """给 notes/<filename> 追加一条（按日期分节）。文件名只许是 notes 里的普通 .md。返回相对路径。"""
+        if not re.fullmatch(r"[A-Za-z0-9_\-]+\.md", filename):
+            raise HabitError(f"记笔记的文件名不合规：{filename!r}")
+        notes = self.path(name) / "notes"
+        notes.mkdir(parents=True, exist_ok=True)
+        target = notes / filename
+        now = self.now()
+        old = target.read_text(encoding="utf-8") if target.is_file() else ""
+        heading = f"## {now.strftime('%Y-%m-%d')}"
+        body = old.rstrip("\n")
+        if heading not in old:
+            body += ("\n\n" if body else "") + heading
+        body += f"\n- {now.strftime('%H:%M')} {' '.join(text.split())}\n"
+        _write_text(target, body)
+        return f"notes/{filename}"
 
     def get(self, name: str) -> Habit:
         """读一个习惯。读之前先看有没有被手改过：有就先提交一次（H4、§6.7）。"""
