@@ -11,7 +11,7 @@ import json
 from datetime import date
 from pathlib import Path
 
-KEYS = ("calls", "prompt", "completion", "cache_hit", "cache_miss")
+KEYS = ("calls", "prompt", "completion", "cache_hit", "cache_miss", "says")   # says：它开口说了几句（面板折线用）
 KEEP_DAYS = 60
 
 
@@ -82,6 +82,23 @@ class UsageTracker:
             self.total[key] += value
             source_day[key] += value
         self.save()
+
+    def note_say(self) -> None:
+        """它说了一句（不分主动还是回应）：只计数，给「AI 状态」的折线用。"""
+        self.days.setdefault(self.today().isoformat(), _empty())["says"] += 1
+        self.total["says"] += 1
+        self.save()
+
+    def recent(self, days: int = 14) -> list[tuple[str, dict]]:
+        """最近 ``days`` 天（含今天，按日期从早到晚），没记录的日子补零。"""
+        from datetime import timedelta
+
+        today = self.today()
+        out = []
+        for back in range(days - 1, -1, -1):
+            key = (today - timedelta(days=back)).isoformat()
+            out.append((key, dict(self.days.get(key, _empty()))))
+        return out
 
     def today_row(self) -> dict:
         return dict(self.days.get(self.today().isoformat(), _empty()))

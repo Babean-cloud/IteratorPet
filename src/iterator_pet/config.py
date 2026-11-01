@@ -66,6 +66,8 @@ class Config:
     llm_daily_token_cap: int = 10_000_000
     # 话量 0..1：只管"自言自语"的频率（用户找它、拖它、提醒照常说）
     llm_talkativeness: float = 0.5
+    # 「今天别说话」：到这个时刻（本地时间戳，次日 0 点）之前不主动开口、不主动请求；0 = 没开
+    quiet_until: float = 0.0
     # 估算花费用的单价（元 / 百万 token：输入命中缓存、输入未命中、输出）——以官网为准，自己改
     llm_price_hit: float = 0.2
     llm_price_miss: float = 2.0

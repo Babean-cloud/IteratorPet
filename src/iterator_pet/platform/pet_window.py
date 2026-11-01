@@ -707,6 +707,25 @@ class PetWindow(PetCanvas):
         self.update()
         save(self.config)
 
+    @property
+    def quiet_today(self) -> bool:
+        return time.time() < float(getattr(self.config, "quiet_until", 0.0) or 0.0)
+
+    def set_quiet_today(self, on: bool) -> None:
+        """「今天别说话」：到明天 0 点前不主动开口（你找它、提醒、任务结果照常）。"""
+        from datetime import datetime, timedelta
+
+        until = 0.0
+        if on:
+            tomorrow = datetime.now().date() + timedelta(days=1)
+            until = datetime.combine(tomorrow, datetime.min.time()).timestamp()
+        self.config.quiet_until = until
+        save(self.config)
+        if self.director is not None:
+            self.director.mute_until = until
+            self.director.log("用户让你今天别说话" if on else "用户说你可以说话了")
+            self.director._say(self.simulation, "……行，今天我不出声了。" if on else "……那我就接着说了。", direct=True)
+
     # -- 系统状态 ---------------------------------------------------------------
     def _poll_system(self) -> None:
         from . import system_status
@@ -1097,6 +1116,7 @@ class PetWindow(PetCanvas):
             sensors.BLACKLIST = tuple(cfg.perception_blacklist or DEFAULT_BLACKLIST)
             self.director.vision_model = getattr(cfg, "llm_vision_model", "") or None
             self.director.screen_vision_mode = getattr(cfg, "screen_vision", "off")
+            self.director.mute_until = float(getattr(cfg, "quiet_until", 0.0) or 0.0)
         self.simulation.pool_lines = self.director is None
         self.simulation.pending_events.clear()
         if self.director is None:

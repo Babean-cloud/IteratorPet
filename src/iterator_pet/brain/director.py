@@ -108,6 +108,30 @@ def _text_only(message: dict) -> dict:
     return message
 
 
+def error_kind(error: str) -> str:
+    """请求失败的大类：auth（Key 不对）/ balance（没钱了）/ network / server / other。"""
+    text = (error or "").lower()
+    if "http 401" in text or "缺少 api key" in text or "authentication" in text:
+        return "auth"
+    if "http 402" in text or "insufficient" in text or "balance" in text:
+        return "balance"
+    if "网络错误" in error or "timed out" in text or "urlopen" in text:
+        return "network"
+    if any(f"http {code}" in text for code in (500, 502, 503, 504)):
+        return "server"
+    return "other"
+
+
+# 出错时用自己的口吻说一句（用户 2026-11-02：余额用完、Key 失效时别静默退回台词池）
+ERROR_LINES = {
+    "auth": "……外面不认我的钥匙了。去右键「AI」→「API Key…」看看。",
+    "balance": "……外面的额度用完了。充上之前，我只能自言自语。",
+    "network": "……接不上外面了。网断了？",
+    "server": "……外面那边出故障了，等一会儿再说。",
+}
+ERROR_REPEAT = 2 * 3600.0     # 同一类错误多久才再提一次（用户在等回复时不受限）
+
+
 def say_gap(talkativeness: float) -> float:
     """自主说话的最小间隔（秒）：话量 0 → 170 s，0.5 → 100 s，1 → 30 s。
 
@@ -203,6 +227,7 @@ class Director:
         self.desire = 0.0
         self.away = False
         self.quiet = False                # 勿扰（全屏）：不主动请求、不主动说话
+        self.mute_until = 0.0             # 「今天别说话」：到这个时刻（wall 时间戳）前不主动开口、不主动请求
         self.system: dict = {}            # 窗口每秒写：cpu / battery / charging
         self._extra_obs: dict = {}        # 一次性附加进下一次观察（任务结果等）
         self._task_notice: tuple[str, float] | None = None   # 任务结束的保底提示（task_finished）
@@ -210,6 +235,7 @@ class Director:
         self._long_marked: float | None = None
         self._agent_pending: dict | None = None   # 编程 agent 发来、还没说出口的通知
         self.last_error: str | None = None
+        self._error_said: dict[str, float] = {}     # 每类错误上次说出口的时刻
         self.last_action: dict | None = None
         self.requests = 0
 
@@ -317,6 +343,10 @@ class Director:
         return self._busy
 
     @property
+    def muted_today(self) -> bool:
+        return self.wall().timestamp() < self.mute_until
+
+    @property
     def over_budget(self) -> bool:
         return (self.usage is not None and self.daily_token_cap > 0
                 and self.usage.today_tokens() >= self.daily_token_cap)
@@ -338,6 +368,9 @@ class Director:
             return False
         now = self.clock()
         gap = max(SAY_FLOOR, say_gap(self.talkativeness) * self.remarks.scale)
+        if not direct and self.muted_today:
+            self.log(f"（今天别说话，这句没说出口：{text.strip()[:30]}）")
+            return False
         if not direct and (self.quiet or now - self._last_auto_say < gap):
             # 刚开过口：写在代码里丢掉（plan 里排的话也走这里），不靠提示词约束
             if not self.quiet:
@@ -345,6 +378,8 @@ class Director:
             return False
         text = text.strip()[:SAY_MAX_CHARS]
         if sim.say(text):
+            if self.usage is not None and hasattr(self.usage, "note_say"):
+                self.usage.note_say()
             if not direct:
                 self._last_auto_say = now
                 window = self.perception.describe() if self.perception is not None else None
@@ -439,7 +474,7 @@ class Director:
         if self._force_reflect:                      # 用户亲手点的：不看额度和间隔
             self._start(sim, "reflect", None)
             return
-        if now < self._next_allowed or self.over_budget or self.away:
+        if now < self._next_allowed or self.over_budget or self.away or self.muted_today:
             return
         score = self.salience + self.desire
         since = now - self._last_request
@@ -1017,6 +1052,18 @@ class Director:
         text, usage = reply if isinstance(reply, tuple) else (reply, {})
         return text, [usage]
 
+    def _error_notice(self, error: str, waiting: bool) -> str | None:
+        """这次失败要不要说出来、说什么。用户在等回复就一定说；否则同一类错误 ``ERROR_REPEAT`` 内只说一次。"""
+        kind = error_kind(error)
+        line = ERROR_LINES.get(kind)
+        if line is None:
+            return "……刚才没想出来。再说一遍？" if waiting else None
+        now = self.clock()
+        if not waiting and now - self._error_said.get(kind, -1e9) < ERROR_REPEAT:
+            return None
+        self._error_said[kind] = now
+        return line
+
     def _drain_results(self, sim) -> None:
         while True:
             try:
@@ -1034,6 +1081,10 @@ class Director:
                     _log(error)
                 self.last_error = error
                 self._next_allowed = self.clock() + ERROR_BACKOFF
+                notice = self._error_notice(error, waiting=reason == "chat")
+                if notice:
+                    self._say(sim, notice, direct=True)       # 用户在等回复 / 第一次出这类错：明说，别静默退回台词池
+                    continue
                 if reason == "pearl":
                     self._pearl_in_flight = None
                     self._reading = ["……这颗珍珠现在读不出来。"]
@@ -1164,6 +1215,7 @@ class Director:
             "salience": round(self.salience, 2),
             "away": self.away,
             "quiet": self.quiet,
+            "muted_until": self.mute_until if self.muted_today else None,
             "over_budget": self.over_budget,
             "reminders": (self.reminders.describe() if self.reminders is not None else [])
                          + (self.errands.describe() if self.errands is not None else []),

@@ -149,6 +149,12 @@ def add_ai_actions(menu: QMenu, window) -> None:
 
     add_pearl_menu(menu, window)
 
+    action_quiet = QAction("今天别说话", menu)
+    action_quiet.setCheckable(True)
+    action_quiet.setChecked(bool(getattr(window, "quiet_today", False)))
+    action_quiet.triggered.connect(lambda checked: window.set_quiet_today(bool(checked)))
+    menu.addAction(action_quiet)
+
     action_panel = QAction("AI 状态…", menu)
     action_panel.triggered.connect(window.show_ai_panel)
     menu.addAction(action_panel)
@@ -265,6 +271,14 @@ def tray_menu(window, on_dev_panel=None) -> QMenu:
     action_click.setChecked(bool(getattr(window, "click_through", False)))
     action_click.triggered.connect(window.toggle_click_through)
     menu.addAction(action_click)
+
+    from . import autostart
+
+    action_boot = QAction("开机自启", menu)
+    action_boot.setCheckable(True)
+    action_boot.setChecked(autostart.enabled())
+    action_boot.triggered.connect(lambda checked: action_boot.setChecked(autostart.set_enabled(bool(checked))))
+    menu.addAction(action_boot)
 
     menu.addSeparator()
     action_dev = QAction("开发者面板", menu)

@@ -73,6 +73,57 @@ class _Card(QFrame):
             layout.addWidget(self.bar)
 
 
+class _Trend(QWidget):
+    """最近 14 天：柱 = 估算花费，折线 = 它说了几句。只画，不交互。"""
+
+    def __init__(self, accent):
+        super().__init__()
+        self.accent = accent
+        self.data: list[tuple[str, float, int]] = []
+        self.setFixedHeight(96)
+
+    def set_data(self, data) -> None:
+        self.data = list(data)
+        self.update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        from PySide6.QtCore import QPointF, QRectF
+        from PySide6.QtGui import QColor, QPainter, QPen
+
+        if not self.data:
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = self.width(), self.height()
+        top, bottom = 18.0, h - 16.0
+        n = len(self.data)
+        step = w / n
+        max_cost = max(c for _, c, _ in self.data) or 1.0
+        max_says = max(s for _, _, s in self.data) or 1
+        accent = QColor(self.accent)
+        muted = QColor(accent)
+        muted.setAlpha(90)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(muted)
+        for i, (_, cost, _) in enumerate(self.data):
+            bar = (bottom - top) * cost / max_cost
+            p.drawRoundedRect(QRectF(i * step + step * 0.2, bottom - bar, step * 0.6, bar), 2, 2)
+        p.setPen(QPen(accent, 1.6))
+        points = [QPointF(i * step + step / 2, bottom - (bottom - top) * s / max_says)
+                  for i, (_, _, s) in enumerate(self.data)]
+        p.drawPolyline(points)
+        p.setPen(QColor(150, 150, 160))
+        font = p.font()
+        font.setPixelSize(10)
+        p.setFont(font)
+        p.drawText(QRectF(0, 0, w, 14), Qt.AlignmentFlag.AlignLeft,
+                   f"最近 14 天 · 柱：估算花费（最高 ¥{max_cost:.2f}） · 线：说了几句（最多 {max_says}）")
+        for i in (0, n - 1):
+            p.drawText(QRectF(i * step, bottom + 2, step, 14), Qt.AlignmentFlag.AlignHCenter,
+                       self.data[i][0][5:])
+        p.end()
+
+
 class _Rows(QWidget):
     """一组键值行：键列定宽、灰；值可换行；空值整行隐藏。"""
 
@@ -126,6 +177,8 @@ class AIPanel(FramedWindow):
             grid.addWidget(card, i // 2, i % 2)
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(1, 1)
+        self.trend = _Trend(self.accent)
+        grid.addWidget(self.trend, 2, 0, 1, 2)
         # 卡片以下放进滚动区：记忆、日记越攒越长，整窗会比屏幕还高，底下的按钮和珍珠就够不着了
         self.content = QWidget()
         page = QVBoxLayout(self.content)
@@ -267,6 +320,9 @@ class AIPanel(FramedWindow):
         self.cost.value.setText(f"¥{UsageTracker.cost(today, prices):.3f}")
         self.cost.note.setText(f"累计 ¥{UsageTracker.cost(total, prices):.2f} · "
                                f"{_fmt_tokens(total['prompt'] + total['completion'])}")
+
+        self.trend.set_data([(day, UsageTracker.cost(row, prices), row.get("says", 0))
+                             for day, row in usage.recent(14)])
 
         rows, rel = self.now, self.rel
         director = win.director
