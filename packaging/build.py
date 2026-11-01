@@ -39,8 +39,8 @@ EXE_NAME = "启动"
 # `icacls /setintegritylevel Medium` 修掉了，见 AGENTS §8.2）。
 DEFAULT_OUT = ROOT / "dist"
 
-EXCLUDES = (
-    "scipy", "pandas", "matplotlib", "lxml", "cryptography",
+EXCLUDES = (                             # lxml 不能排除：python-docx（读写 Word）离不开它
+    "scipy", "pandas", "matplotlib", "cryptography",
     "PyQt5", "PyQt6", "PySide2", "tkinter", "IPython", "jedi",
 )
 
@@ -78,6 +78,15 @@ def build(out_dir: Path) -> None:
         # astc_encoder 在 import 时就会 archspec.cpu.host() 读 JSON 数据表；
         # PyInstaller 默认只收 py 文件，缺 json 会在切素材时抛 FileNotFoundError。
         "--collect-all", "archspec",
+        # 地点簿的模糊匹配：pypinyin 的拼音表是 json 数据，不收进来 import 就炸
+        "--collect-data", "pypinyin",
+        # 读课件（markitdown，可选依赖 [docs]）：magika 的识别模型、docx / pptx 的模板、pdfminer 的 cmap 都是数据文件。
+        # 没装 [docs] 时这些 collect 只会警告，不影响构建
+        "--collect-all", "markitdown",
+        "--collect-all", "magika",
+        "--collect-data", "docx",
+        "--collect-data", "pptx",
+        "--collect-data", "pdfminer",
         "--icon", str(ROOT / "packaging" / "icon.ico"),
         "--distpath", str(out_dir),
         "--workpath", str(ROOT / "build" / "pyinstaller"),

@@ -34,7 +34,54 @@ def _log(text: str) -> Path | None:
         return None
 
 
+def _selftest(out: Path) -> int:
+    """``启动.exe --selftest 结果.txt``：在打好的包里试一遍容易漏数据文件的模块，结果写进文件
+    （noconsole 没有 stdout）。PyInstaller 漏收数据文件时构建照样成功，只有真跑才知道。"""
+    import tempfile
+
+    rows = []
+
+    def check(name, fn):
+        try:
+            rows.append(f"ok   {name}: {fn()}")
+        except BaseException as exc:                     # noqa: BLE001
+            rows.append(f"FAIL {name}: {type(exc).__name__}: {exc}")
+
+    def pinyin():
+        from pypinyin import lazy_pinyin
+        return "".join(lazy_pinyin("多媒体"))
+
+    def places():
+        from iterator_pet.brain.places import match
+        hits = match("莫莫的课件", {"MM课": {"path": "D:/x"}}, {"MM": {"meaning": "MM课"}})
+        return hits[:1]
+
+    def docs():
+        import docx
+        from markitdown import MarkItDown
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "t.docx"
+            d = docx.Document()
+            d.add_paragraph("迭代器自检")
+            d.save(path)
+            return MarkItDown().convert(str(path)).text_content.strip()[:20]
+
+    def audio():
+        from PySide6.QtMultimedia import QAudioSink, QMediaDevices  # noqa: F401
+        from iterator_pet.platform.mixer import Mixer
+        return Mixer().mix(4).shape
+
+    check("pypinyin", pinyin)
+    check("places", places)
+    check("markitdown+docx", docs)
+    check("audio", audio)
+    out.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    return 0 if all(r.startswith("ok") for r in rows) else 1
+
+
 if __name__ == "__main__":
+    if len(sys.argv) == 3 and sys.argv[1] == "--selftest":
+        raise SystemExit(_selftest(Path(sys.argv[2])))
     try:
         from iterator_pet.launcher import main
 
