@@ -148,11 +148,18 @@ HABIT_OPS = {"pause": "暂停了", "resume": "恢复了", "revert": "撤回到�
 HABIT_LINES = {
     "pebbles": {"done": "……{verb}：{what}。不对就说“改回去”。", "busy": "……上一件还在写，等着。",
                 "unknown": "……我不记得有这个习惯。说清楚点。", "failed": "……没弄成。详情在对话窗口里。",
+                "budget": "……今天的额度用完了。要动脑子的习惯先停到明天。",
                 "pause": "……停了。", "resume": "……接着干。", "revert": "……改回去了。", "delete": "……扔了，还在回收站里。"},
     "past_moon": {"done": "{verb}：{what}。不合意就说“改回去”。", "busy": "上一件还在写，请稍等。",
                   "unknown": "我不记得有这样的习惯，能说得再清楚些吗？", "failed": "没能写成，原因在对话窗口里。",
+                  "budget": "今天的额度用完了，要费心思的习惯先歇到明天。",
                   "pause": "先停下了。", "resume": "又开始了。", "revert": "已经改回去了。", "delete": "收起来了，回收站里还留着。"},
 }
+
+
+def _total_tokens(usage) -> int:
+    usage = usage or {}
+    return int(usage.get("total_tokens") or (usage.get("prompt_tokens", 0) or 0) + (usage.get("completion_tokens", 0) or 0))
 
 
 def say_gap(talkativeness: float) -> float:
@@ -172,7 +179,7 @@ class Director:
                  wall=datetime.now, talkativeness: float = 0.5, chatlog=None, context=None,
                  pearls=None, errands=None, watcher=None, sensors=None,
                  on_task_request=None, task_workspace: str | None = None,
-                 habits=None, habit_state=None):
+                 habits=None, habit_state=None, habit_scheduler=None):
         from . import perception as P
 
         self._new_stats = P.new_stats
@@ -203,6 +210,12 @@ class Director:
         self.habit_state = habit_state
         self._habit_busy = False                   # HabitAuthor 正在写（一次只写一件）
         self._habit_results: queue.Queue = queue.Queue()
+        self.habit_scheduler = habit_scheduler     # 定时 / 事件触发（habits/scheduler.py）
+        self._habit_inline: list = []              # 到点、等着开口的 inline 习惯
+        self._habit_tasks: list = []               # 到点、等着后台跑的 task 习惯（runner.py）
+        self._habit_inflight = None                # 正在为哪个 inline 习惯请求（apply 时要用）
+        self._habit_budget_day: str | None = None  # 全局额度用完的提示今天说过没有
+        self._back_pending = False                 # 用户刚回来（user_back 事件，下次检查习惯时用掉）
         self._habit_question: dict | None = None   # 作者反问过的：用户下一句的回答要和原话并在一起再写
         self.pearls = pearls                       # PearlStore（可以没有）
         self._pending_pearls: list[str] = []
@@ -477,6 +490,7 @@ class Director:
             if regular_perceive:
                 self._fire_reminders(sim)
                 self._check_errands(sim)
+                self._check_habits()
                 self.remarks.settle(self.wall().timestamp(), dt=PERCEIVE_EVERY)
                 self._tick_relation(now)
 
@@ -511,6 +525,14 @@ class Director:
         if self._pending_pearls and not self._reading and now - self._last_sent >= URGENT_GAP:
             self._start_pearl(sim, self._pending_pearls.pop(0))
             return
+        if self._habit_inline and not self.muted_today and not self.away and not self.quiet \
+                and now - self._last_sent >= URGENT_GAP:
+            if self.over_budget:
+                self._habit_inline.clear()
+                self._habit_over_budget(sim)
+            else:
+                self._start_habit(sim, self._habit_inline.pop(0))
+                return
         if self._force_reflect:                      # 用户亲手点的：不看额度和间隔
             self._start(sim, "reflect", None)
             return
@@ -741,6 +763,7 @@ class Director:
             self.away = False
             self.planner.clear(sim)
             self.log("用户回来了")
+            self._back_pending = True
             self.bump("back")
         elif self.away and self.planner.idle:
             self.planner.load([{"do": "sleep", "s": 300}], sim)
@@ -1125,6 +1148,8 @@ class Director:
                 if error != self.last_error:
                     _log(error)
                 self.last_error = error
+                if reason == "habit":
+                    self._habit_finished(False, error=error)
                 self._next_allowed = self.clock() + ERROR_BACKOFF
                 notice = self._error_notice(error, waiting=reason == "chat")
                 if notice:
@@ -1148,6 +1173,7 @@ class Director:
                 if stats is not None and one:
                     stats["tokens"] += int(one.get("total_tokens", 0) or 0)
             self.last_error = None
+            self._habit_tokens = sum(_total_tokens(one) for one in usages) if reason == "habit" else 0
             self.last_action = action
             self.context.add_turn(brief, json.dumps(action or {}, ensure_ascii=False))
             if reason == "pearl":
@@ -1161,8 +1187,9 @@ class Director:
 
     # -- 动作落地（主线程） -------------------------------------------------
     def apply(self, sim, action: dict, reason: str = "chat", user_text: str | None = None) -> None:
-        if reason == "agent":
-            # 外来通知触发的那次：只采用说的话、心情、念头（通知内容进不了记忆 / 提醒 / 日程 / 心事）
+        if reason in ("agent", "habit"):
+            # 外来通知 / 习惯 notes（里面可能有网上抄来的内容）触发的那次：只采用说的话、心情、念头
+            # （内容进不了记忆 / 提醒 / 日程 / 心事 / 习惯）
             action = {k: action.get(k) for k in ("say", "mood", "thought")}
             if action.get("say"):
                 self.planner.load([{"do": "go", "to": "cursor"}], sim)
@@ -1173,7 +1200,12 @@ class Director:
             self._task_notice = None
         why = WHY_LABELS.get(reason, reason)
         thought_now = action.get("thought") if isinstance(action.get("thought"), str) else None
-        self._say(sim, said, direct=reason in DIRECT_REASONS, why=why, thought=thought_now)
+        direct = reason in DIRECT_REASONS or (
+            reason == "habit" and (self._habit_inflight or {}).get("priority") == "high")
+        spoke = self._say(sim, said, direct=direct, why=why, thought=thought_now)
+        if reason == "habit":
+            self._habit_finished(True, said=said if spoke and isinstance(said, str) else "（没说出口）",
+                                 tokens=getattr(self, "_habit_tokens", 0))
         mood = action.get("mood")
         if isinstance(mood, str) and mood.strip():
             self.mood = mood.strip()[:12]
@@ -1346,6 +1378,65 @@ class Director:
             self.chatlog.add("system", f"习惯「{habit.title}」{HABIT_OPS[op]}")
         self._say(sim, HABIT_LINES[key][op], direct=True, why="你要求动习惯")
 
+    def _check_habits(self) -> None:
+        """跟着感知节拍：哪些习惯到点了。inline 排队等开口，task 排队等后台跑。"""
+        if self.habit_scheduler is None:
+            return
+        events = ("user_back",) if self._back_pending else ()
+        self._back_pending = False
+        for due in self.habit_scheduler.due(self.wall(), quiet=self.quiet, away=self.away, events=events):
+            queue_ = self._habit_inline if due.run == "inline" else self._habit_tasks
+            if any(d.name == due.name and d.id == due.id for d in queue_):
+                continue
+            if self.habit_state is not None:
+                self.habit_state.mark_run(due.name, due.id, due.scheduled if due.trigger["type"] == "time" else None)
+            queue_.append(due)
+
+    def _habit_over_budget(self, sim) -> None:
+        """全局每日额度用完：要调模型的习惯先停到明天，每天只说一次（H10）。"""
+        day = self.wall().date().isoformat()
+        if self._habit_budget_day != day:
+            self._habit_budget_day = day
+            self._say(sim, HABIT_LINES[sim.appearance.key]["budget"], direct=True, why="今天的额度用完了，习惯先停")
+
+    def _start_habit(self, sim, due) -> None:
+        try:
+            habit = self.habits.peek(due.name)
+        except Exception as exc:                       # noqa: BLE001
+            _log(f"习惯 {due.name} 读不了：{exc}")
+            return
+        day_tokens = habit.config["budget"]["day_tokens"]
+        if self.habit_state is not None and self.habit_state.day_tokens(due.name) >= day_tokens:
+            self.habits.append_log(due.name, {"trigger": due.id, "kind": "inline", "result": "over_budget",
+                                              "summary": "今天这个习惯的额度用完了"})
+            return
+        self._habit_inflight = {"name": due.name, "id": due.id, "title": habit.title,
+                                "priority": habit.config["speak"]["priority"]}
+        info = {"title": habit.title, "trigger_id": due.id, "section": self.habits.section_for(habit, due.trigger)}
+        notes = self.habits.notes_digest(habit)
+        if notes:
+            info["notes"] = notes
+        if due.late:
+            info["late"] = True
+        self.log(f"习惯「{habit.title}」到点了（{due.id}）")
+        self._start(sim, "habit", None, extra={"habit": info})
+
+    def _habit_finished(self, ok: bool, said: str = "", tokens: int = 0, error: str = "") -> None:
+        """inline 习惯这一轮的收尾：log、记今日 token、连续失败 3 次自动暂停。"""
+        flight, self._habit_inflight = self._habit_inflight, None
+        if flight is None or self.habits is None:
+            return
+        self.habits.append_log(flight["name"], {
+            "trigger": flight["id"], "kind": "inline", "tokens": tokens, "steps": 1,
+            "result": "ok" if ok else "failed", "summary": (said if ok else error)[:80], "files": []})
+        if self.habit_state is not None:
+            if tokens:
+                self.habit_state.add_tokens(flight["name"], tokens)
+            if self.habit_state.record_result(flight["name"], ok) >= 3:
+                self.habit_state.set_paused(flight["name"], "连续失败 3 次，自动暂停了")
+                self.log(f"习惯「{flight['title']}」连续失败 3 次，先暂停了")
+        self.habits.commit(f"运行记录：{flight['name']}", f"habits/{flight['name']}/log.jsonl")
+
     def _run_habit_author(self, op, name, user_text, existing, taken, character) -> None:
         """工作线程：只有 HTTP。写文件放回主线程（``_drain_habits``）。"""
         from .habits import author
@@ -1393,6 +1484,10 @@ class Director:
                 _log(f"习惯写入失败：{exc}")
                 self._say(sim, lines["failed"], direct=True, why="习惯没写成")
                 continue
+            if self.habit_state is not None:
+                for trig in habit.config["triggers"]:     # 新触发从现在起算，不因为“今天这个点已过”立刻补跑
+                    if not self.habit_state.last_run(habit.name, trig["id"]):
+                        self.habit_state.mark_run(habit.name, trig["id"], self.wall().timestamp())
             self.log(f"习惯「{habit.title}」{verb}：{result.change_summary}")
             if self.chatlog is not None:
                 self.chatlog.add("system", f"习惯「{habit.title}」{verb}：{result.change_summary}（不对就说“改回去”）")

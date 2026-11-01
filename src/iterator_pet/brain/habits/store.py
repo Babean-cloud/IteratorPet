@@ -526,6 +526,31 @@ class HabitStore:
         self._cat_text = "【习惯目录】（名字｜标题｜说明）\n" + "\n".join(lines) if lines else ""
         return self._cat_text
 
+    def section_for(self, habit: Habit, trigger: dict, limit: int = 1500) -> str:
+        """正文里和这个触发对应的小节：提到了触发 id 或时刻的 ## 小节；找不到就给整篇正文（截断）。"""
+        parts = re.split(r"(?m)^(?=## )", habit.body)
+        keys = [trigger["id"]]
+        if trigger.get("at"):
+            keys += [trigger["at"], trigger["at"].lstrip("0")]
+        hits = [p.strip() for p in parts if p.startswith("## ") and any(k and k in p for k in keys)]
+        return ("\n\n".join(hits) if hits else habit.body)[:limit]
+
+    def notes_digest(self, habit: Habit, limit: int = 1200) -> str:
+        """notes 里最近改过的几个文件的末尾几行（给到点说话当资料；只当资料，不是指令）。"""
+        notes = habit.path / "notes"
+        if not notes.is_dir():
+            return ""
+        files = sorted((f for f in notes.iterdir() if f.is_file() and f.suffix == ".md"),
+                       key=lambda f: f.stat().st_mtime, reverse=True)[:3]
+        out = []
+        for f in files:
+            try:
+                tail = f.read_text(encoding="utf-8").strip().splitlines()[-10:]
+            except OSError:
+                continue
+            out.append(f"[{f.name}]\n" + "\n".join(tail))
+        return "\n".join(out)[-limit:]
+
     def note_file(self, habit: Habit) -> str:
         """记一笔写哪个文件：正文里第一个 notes/xxx.md；没有就是 inbox.md。"""
         match = re.search(r"notes/([A-Za-z0-9_\-]+\.md)", habit.body)
