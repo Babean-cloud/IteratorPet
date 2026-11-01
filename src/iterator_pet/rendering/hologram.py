@@ -213,9 +213,12 @@ def draw_edge(p: QPainter, width: float, height: float, color, rng: random.Rando
     p.setBrush(Qt.BrushStyle.NoBrush)
     main = panel_shape(width, height, x + rng.uniform(-0.8, 0.8), y + rng.uniform(-0.8, 0.8))
     pen = QPen(qcolor(color, rng.uniform(0.75, 0.95), 1.15), 1.2)
-    if rng.random() < 0.35:                                  # 偶尔断一截
-        gap = rng.uniform(6, 30)
-        pen.setDashPattern([rng.uniform(80, 200) / 1.2, gap / 1.2])
+    # 断点密一些、四条边都有（用户 2026-11-01）：长短不一的几段循环，起点随机，每次位移的断口都不一样
+    dashes = []
+    for _ in range(6):
+        dashes += [rng.uniform(18, 70) / 1.2, rng.uniform(2, 9) / 1.2]
+    pen.setDashPattern(dashes)
+    pen.setDashOffset(rng.uniform(0, sum(dashes)))
     p.setPen(pen)
     p.drawPath(main)
     ghost = panel_shape(width, height, x + rng.choice((-1, 1)) * rng.uniform(1.5, 3.0),
@@ -227,7 +230,7 @@ def draw_edge(p: QPainter, width: float, height: float, color, rng: random.Rando
 
 EDGE_MARGIN = 5.0                       # 面板四周留给边线位移的余量
 CUT = 12.0                              # 八边形切角
-EDGE_VARIANTS, EDGE_HOLD = 8, 3         # 边线预先画几种位移；每种停几个 tick 再换
+EDGE_VARIANTS, EDGE_HOLD = 12, 1        # 边线预先画几种位移；每种停几个 tick 再换（每 tick 都换 = 抖得勤）
 
 
 def _begin(width: int, height: int, color) -> tuple[QImage, QPainter]:
