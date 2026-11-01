@@ -1191,22 +1191,15 @@ class SimulationState:
         """给渲染层的气泡数据。``anchor`` 是**仿真 px**，转换在绘制前做一次（审计 A1）。"""
         if not self.dialogue.text:
             return None
-        # 用户 2026-11-01：不再钉在屏幕下方（底边是输入法 / 终端的地方），改成跟着人偶：
-        # 默认在人偶上方；滑车在左 / 右墙时往背离墙的一侧偏，免得压在机械臂上；
-        # 上面放不下由渲染层翻到人偶下方（below），并且整体不进底部那条带子。
-        head = self.creature.chunk0
-        base = self.rail.pose(self.frame_pos).point
-        x, _, w, _ = self._bounds
-        shift = 0.0
-        if base[0] - x < 0.15 * w:
-            shift = C.DIALOGUE_SIDE_SHIFT
-        elif x + w - base[0] < 0.15 * w:
-            shift = -C.DIALOGUE_SIDE_SHIFT
+        # 用户 2026-11-01：原版 HUD 字幕的样子不变，但从屏幕下方挪到**屏幕上方居中**
+        # （底边是输入法 / 终端打字的地方；跟着人偶走试过，观感不对）。
+        # anchor 是屏幕上沿中点（仿真 px），渲染层按 ``top`` 把气泡顶边放在它下面 DIALOGUE_TOP_MARGIN。
+        x, y, w, _ = self._bounds
         return {
             "text": self.dialogue.visible_text(),
             "size_fac": float(self.dialogue.size_fac),
-            "anchor": (head[0] + shift, head[1] - C.DIALOGUE_HEAD_GAP),
-            "below": head[1] + C.DIALOGUE_HEAD_GAP,
+            "anchor": (x + w * 0.5, y),
+            "top": True,
         }
 
     def status(self) -> dict:

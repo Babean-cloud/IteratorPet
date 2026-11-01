@@ -177,9 +177,14 @@ def draw_bubble(painter: QPainter, *, text: str, size_fac: float,
 
 def draw_bubble_world(painter: QPainter, *, text: str, size_fac: float,
                       anchor_sim: tuple[float, float], scale: float,
-                      screen: tuple[float, float], below_sim: float | None = None) -> QRectF | None:
-    """``anchor_sim`` / ``below_sim`` 是仿真 px；**这里是唯一一次坐标转换**（审计 A1）。"""
+                      screen: tuple[float, float], below_sim: float | None = None,
+                      top: bool = False) -> QRectF | None:
+    """``anchor_sim`` / ``below_sim`` 是仿真 px；**这里是唯一一次坐标转换**（审计 A1）。
+    ``top``：字幕挂在屏幕上方，anchor 是上沿中点，气泡顶边在它下面 ``DIALOGUE_TOP_MARGIN``。"""
     anchor_px = (anchor_sim[0] * scale, anchor_sim[1] * scale)
     below = below_sim * scale if below_sim is not None else None
+    if top:
+        below = anchor_px[1] + C.DIALOGUE_TOP_MARGIN
+        anchor_px = (anchor_px[0], -1e6)                    # 上面永远"放不下" → 顶边落在 below
     return draw_bubble(painter, text=text, size_fac=size_fac, anchor=anchor_px,
                        screen=screen, below=below)

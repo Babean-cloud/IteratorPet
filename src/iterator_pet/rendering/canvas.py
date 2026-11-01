@@ -164,6 +164,7 @@ class PetCanvas(QWidget):
             scale=self.scale,
             screen=(float(self.width()), float(self.height())),
             below_sim=data.get("below"),
+            top=bool(data.get("top")),
         )
 
     def paintEvent(self, event) -> None:  # noqa: N802 (Qt naming)

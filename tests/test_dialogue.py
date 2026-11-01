@@ -156,17 +156,23 @@ def test_reset_clears_cooldowns_so_a_new_character_can_speak():
 # --------------------------------------------------------------------------
 # 接线：仿真层里的锚点与"事件 → 台词"
 # --------------------------------------------------------------------------
-def test_bubble_follows_the_puppet_and_never_enters_the_bottom_band():
-    from iterator_pet.rendering.bubble import bubble_rect
+def test_subtitle_hangs_at_the_top_centre_and_never_enters_the_bottom_band():
+    from PySide6.QtGui import QImage, QPainter
+
+    from iterator_pet.rendering.bubble import bubble_rect, draw_bubble_world
     from iterator_pet.simulation.state import SimulationState
 
     sim = SimulationState((0.0, 0.0, 1138.0, 608.0), warmup=0)
     sim.dialogue.start("你还在这里吗？")
     sim.step(0.025)
     view = sim.dialogue_view()
-    head = sim.creature.chunk0
-    assert view["anchor"][1] == head[1] - C.DIALOGUE_HEAD_GAP and view["below"] == head[1] + C.DIALOGUE_HEAD_GAP
-    assert abs(view["anchor"][0] - head[0]) <= C.DIALOGUE_SIDE_SHIFT
+    assert view["anchor"] == (569.0, 0.0) and view["top"]
+    image = QImage(1707, 912, QImage.Format.Format_ARGB32_Premultiplied)
+    p = QPainter(image)
+    rect = draw_bubble_world(p, text="你还在这里吗？", size_fac=1.0, anchor_sim=view["anchor"], scale=1.5,
+                             screen=(1707.0, 912.0), top=True)
+    p.end()
+    assert rect.top() == C.DIALOGUE_TOP_MARGIN and abs(rect.center().x() - 853.5) < 1.0
     screen = (1707.0, 912.0)
     low = bubble_rect((800.0, 900.0), 300.0, 80.0, 1.0, screen)            # 人偶贴着底边
     assert low.bottom() <= screen[1] * (1 - C.DIALOGUE_BOTTOM_BAND) + 1e-6
