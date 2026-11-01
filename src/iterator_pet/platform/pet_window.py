@@ -174,6 +174,12 @@ class PetWindow(PetCanvas):
         self.usage = UsageTracker()
         self.reminders = Reminders()
         self.errands = Errands()                 # 心事：和提醒一样两个角色共用
+        from ..brain.habits.store import HabitState, HabitStore, workspace_path
+
+        # 习惯（brain/habits/）：数据在工作区（默认 %USERPROFILE%\\IteratorWS），运行状态在 %LOCALAPPDATA%；两个角色共用。
+        # 第一次真用到才建文件夹，所以这里建对象不碰磁盘
+        self.habits = HabitStore(workspace_path(config), day_cap=int(getattr(config, "llm_daily_token_cap", 0) or 0))
+        self.habit_state = HabitState()
         from ..brain.pearl_media import PearlMaker
 
         self.pearl_maker = PearlMaker(config)    # 图 / 网页 / 音视频珍珠在后台做
@@ -1109,6 +1115,8 @@ class PetWindow(PetCanvas):
     def _setup_brain(self) -> None:
         """按 config 建/拆导演。拆掉时清掉残留指令，台词池接回来。"""
         from ..brain.director import Director
+        from ..brain.habits.runner import HabitRunner
+        from ..brain.habits.scheduler import HabitScheduler
         from ..brain.perception import DEFAULT_BLACKLIST, Perception
 
         if self.director is not None:
@@ -1142,7 +1150,14 @@ class PetWindow(PetCanvas):
                 task_workspace=self.task_workspace(),
                 # 心事要看别的窗口：「读屏幕」关掉时一并不办
                 errands=self.errands if cfg.perception != "off" else None,
+                habits=self.habits,
+                habit_state=self.habit_state,
+                habit_scheduler=HabitScheduler(self.habits, self.habit_state, getattr(cfg, "cheap_hours", "")),
+                habit_runner=HabitRunner(lambda: self.llm_client(timeout=90.0), self.habits, self.habit_state,
+                                         web_fn=self._web_tools),
             )
+            self.director.task_busy_fn = lambda: self.task_busy          # 委托任务在跑时，习惯任务排队
+            self.director.on_habit_output = lambda title, text: self._projection_source.post_result(f"【{title}】\n{text}")
             from ..brain import sensors
 
             sensors.BLACKLIST = tuple(cfg.perception_blacklist or DEFAULT_BLACKLIST)

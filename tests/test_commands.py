@@ -161,3 +161,38 @@ def test_places_and_forget_commands(tmp_path):
     assert "MM课 →" in listing and "MM = MM课" in listing
     assert execute(pet, "/forget mm")[1].startswith("✓") and not memory.aliases
     assert execute(pet, "/forget 不存在")[1].startswith("✗")
+
+
+def test_habit_commands(tmp_path):
+    from datetime import date
+    from types import SimpleNamespace
+
+    from iterator_pet.brain.habits.store import HabitState, HabitStore
+    from iterator_pet.platform.quick_bar import execute
+    from test_habit_author import HABIT, SKILL
+
+    for line in ("/habit", "/habit pause", "/habit revert  "):
+        with pytest.raises(cmd.CommandError):
+            cmd.parse(line)
+    assert cmd.parse("/habit pause idea-review").text == "pause idea-review"
+    assert [s.name for s in cmd.complete("/hab")] == ["habits", "habit"]
+
+    store = HabitStore(tmp_path / "ws", git=lambda: None)
+    state = HabitState(tmp_path / "state.json", today=date.today)
+    pet = SimpleNamespace(habits=store, habit_state=state)
+    assert "还没有习惯" in execute(pet, "/habits")[1]
+    store.write("idea-review", SKILL, HABIT, "帮我记想法", kind="create")
+    listing = execute(pet, "/habits")[1]
+    assert "idea-review｜想法回顾" in listing and "暂停" not in listing
+    detail = execute(pet, "/habit 想法回顾")[1]
+    assert "idea-review" in detail and "22:30" in detail and "聊到“用户随口说出想法”" in detail
+    assert "今天花了 0 / 80000 token" in detail
+    assert execute(pet, "/habit pause idea-review")[1] == "✓ 「想法回顾」暂停了。" and not store.get("idea-review").enabled
+    assert "已暂停" in execute(pet, "/habits")[1]
+    state.set_paused("idea-review", "连续失败 3 次，自动暂停了")
+    assert "自动暂停" in execute(pet, "/habits")[1]
+    assert execute(pet, "/habit resume idea-review")[1].endswith("恢复了。") and not state.paused("idea-review")
+    store.write("idea-review", SKILL + "\n补一句\n", HABIT, "改", kind="update")
+    assert "撤回到上一版" in execute(pet, "/habit revert idea-review")[1]
+    assert execute(pet, "/habit nope")[1].startswith("✗")
+    assert execute(SimpleNamespace(), "/habits")[1].startswith("✗")

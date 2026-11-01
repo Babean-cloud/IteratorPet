@@ -110,6 +110,80 @@ def _do_status(pet, command) -> tuple[bool, str]:
     return True, "\n".join(lines)
 
 
+def _habit_store(pet):
+    return getattr(pet, "habits", None)
+
+
+def _do_habits(pet, command) -> tuple[bool, str]:
+    store = _habit_store(pet)
+    if store is None:
+        return True, "✗ 习惯系统没启动。"
+    habits = store.list()
+    if not habits and not store.errors:
+        return True, "还没有习惯。跟它说“帮我……”，比如“我随口说的想法你帮我记下来，每天回顾”。"
+    state = getattr(pet, "habit_state", None)
+    lines = []
+    for habit in habits:
+        flag = "" if habit.enabled else "（已暂停）"
+        if state is not None and state.paused(habit.name):
+            flag = f"（自动暂停：{state.paused(habit.name)}）"
+        lines.append(f"{habit.name}｜{habit.title}{flag}　{habit.description[:40]}")
+    lines += [f"{name}｜读不了：{why[:40]}" for name, why in store.errors.items()]
+    return True, "\n".join(lines + ["/habit 名字 看详情"])
+
+
+def _trigger_text(trigger: dict) -> str:
+    if trigger["type"] == "chat":
+        return f"{trigger['id']}：聊到“{trigger['when']}”时（{trigger['run']}）"
+    if trigger["type"] == "time":
+        cheap = "，挪到便宜时段" if trigger.get("window") == "cheap" else ""
+        return f"{trigger['id']}：{trigger['days']} {trigger['at']}{cheap}（{trigger['run']}）"
+    return f"{trigger['id']}：事件 {trigger['event']}（{trigger['run']}）"
+
+
+def _do_habit(pet, command) -> tuple[bool, str]:
+    from datetime import datetime
+
+    from ..brain.habits.store import HabitError
+
+    store = _habit_store(pet)
+    if store is None:
+        return True, "✗ 习惯系统没启动。"
+    state = getattr(pet, "habit_state", None)
+    word, _, rest = command.text.partition(" ")
+    op, name = (word, rest.strip()) if word in cmd.HABIT_OPS else ("", command.text.strip())
+    habit = store.find(name)
+    if habit is None:
+        return True, f"✗ 没有叫“{name}”的习惯。/habits 看名字。"
+    if op:
+        try:
+            if op == "pause":
+                store.set_enabled(habit.name, False)
+            elif op == "resume":
+                store.set_enabled(habit.name, True)
+                if state is not None:
+                    state.set_paused(habit.name, "")
+            else:
+                store.revert(habit.name)
+        except HabitError as exc:
+            return True, f"✗ {exc}"
+        return True, f"✓ 「{habit.title}」{ {'pause': '暂停了', 'resume': '恢复了', 'revert': '撤回到上一版了'}[op] }。"
+    lines = [f"{habit.title}（{habit.name}）{'' if habit.enabled else '　已暂停'}", habit.description]
+    lines += ["　" + _trigger_text(t) for t in habit.config["triggers"]]
+    perms = habit.config["permissions"]
+    lines.append(f"权限：{'可联网' if perms['web'] else '不联网'}，写 {perms['write']}")
+    if state is not None:
+        if state.paused(habit.name):
+            lines.append(f"自动暂停：{state.paused(habit.name)}（/habit resume {habit.name} 恢复）")
+        runs = [(t["id"], state.last_run(habit.name, t["id"])) for t in habit.config["triggers"]]
+        seen = [f"{tid} {datetime.fromtimestamp(ts):%m-%d %H:%M}" for tid, ts in runs if ts]
+        lines.append("上次触发：" + ("；".join(seen) if seen else "还没有"))
+        lines.append(f"今天花了 {state.day_tokens(habit.name)} / {habit.config['budget']['day_tokens']} token")
+    for row in store.read_log(habit.name, 3):
+        lines.append(f"　{row.get('ts', '')[5:16].replace('T', ' ')} {row.get('trigger', '')} {row.get('result', '')} {str(row.get('summary', ''))[:30]}")
+    return True, "\n".join(lines)
+
+
 def _do_pearl(pet, command) -> tuple[bool, str]:
     path = command.text.strip().strip('"')
     if path:
