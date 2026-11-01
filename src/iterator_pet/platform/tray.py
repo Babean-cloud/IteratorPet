@@ -165,6 +165,9 @@ def add_ai_actions(menu: QMenu, window) -> None:
     action_panel = QAction("AI 状态…", menu)
     action_panel.triggered.connect(window.show_ai_panel)
     menu.addAction(action_panel)
+    action_settings = QAction("设置…", menu)
+    action_settings.triggered.connect(window.show_settings)
+    menu.addAction(action_settings)
 
     # 不常动的开关收进一个子菜单，右键菜单别拉成一长条
     ai_menu = menu.addMenu("AI")

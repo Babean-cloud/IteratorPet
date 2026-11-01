@@ -1501,6 +1501,39 @@ class PetWindow(PetCanvas):
             self.director.screen_vision_mode = mode
         save(self.config)
 
+    def show_settings(self) -> None:
+        from .settings_window import SettingsWindow
+
+        panel = getattr(self, "_settings", None)
+        if panel is None or not panel.isVisible():
+            panel = SettingsWindow(self)
+            self._settings = panel
+        panel.show()
+        panel.raise_()
+
+    def apply_settings(self, changed: list[str]) -> bool:
+        """设置窗口保存后：config 已改好，这里把能立刻生效的推下去、存盘。返回是否有项要重启才生效。"""
+        cfg, director = self.config, self.director
+        if "perception" in changed:
+            self.set_perception(cfg.perception)
+        if director is not None:
+            director.talkativeness = float(cfg.llm_talkativeness)
+            director.daily_token_cap = int(cfg.llm_daily_token_cap)
+            director.screen_vision_mode = cfg.screen_vision
+            director.task_workspace = self.task_workspace()
+        if "perception_blacklist" in changed:
+            from ..brain import sensors
+            from ..brain.perception import DEFAULT_BLACKLIST
+
+            sensors.BLACKLIST = tuple(cfg.perception_blacklist or DEFAULT_BLACKLIST)
+            if director is not None and director.perception is not None:
+                director.perception.blacklist = tuple(str(item).lower() for item in sensors.BLACKLIST
+                                                      if str(item).strip())
+        if director is not None and {"llm_base_url", "llm_model", "llm_vision_model"} & set(changed):
+            self._setup_brain()                  # 换了接口 / 模型：重建客户端
+        save(cfg)
+        return bool({"chat_hotkey", "bridge_enabled"} & set(changed))
+
     def show_ai_panel(self) -> None:
         from .ai_panel import AIPanel
 
