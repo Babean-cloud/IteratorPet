@@ -19,7 +19,7 @@ from ..rendering.canvas import PetCanvas
 from ..rendering.hologram import Line
 from ..simulation.state import SimulationState
 from .fixed_loop import DEFAULT_MAX_SUBSTEPS, GAME_DT, FixedStepLoop
-from .workspace import ScreenWorkspace
+from .workspace import ScreenWorkspace, pet_rect
 from . import cursorfx, windows_overlay
 from .projections import PRI_INPUT, PRI_NOTICE, STATUS_TTL, ConfirmOffer, ProjectionQueue, ProjectionSource
 
@@ -149,7 +149,7 @@ class PetWindow(PetCanvas):
 
         workspace = ScreenWorkspace()
         snapshot = workspace.snapshot()
-        geo = snapshot.available
+        geo = pet_rect(snapshot)          # 任务栏自动隐藏时让出 2 px，免得被当成全屏程序
         self._origin = (float(geo.x()), float(geo.y()))
         self.setGeometry(geo)
         zoom = max(0.3, min(4.0, float(config.scale)))
@@ -1711,7 +1711,7 @@ def create_window(config: Config | None = None, sprites=None) -> PetWindow:
     cfg = config or load()
     workspace = ScreenWorkspace()
     snapshot = workspace.snapshot()
-    geo = snapshot.available
+    geo = pet_rect(snapshot)          # 任务栏自动隐藏时让出 2 px，免得被当成全屏程序
     zoom = max(0.3, min(4.0, float(cfg.scale)))
     bounds = (0.0, 0.0, float(geo.width()) / zoom, float(geo.height()) / zoom)
     sim = SimulationState(
