@@ -107,22 +107,26 @@ def layout(painter: QPainter, text: str, *, font_px: float = C.DIALOGUE_FONT_PX,
 
 
 def bubble_rect(anchor_px: tuple[float, float], width: float, height: float,
-                size_fac: float, screen: tuple[float, float]) -> QRectF:
-    """锚点是气泡**底边中点**；``size_fac`` 让它从 0.92 长到 1。"""
+                size_fac: float, screen: tuple[float, float], below_px: float | None = None) -> QRectF:
+    """锚点是气泡**底边中点**；``size_fac`` 让它从 0.92 长到 1。
+    上面放不下、给了 ``below_px`` 时翻到下面（那是气泡**顶边**）；不进屏幕底部 ``DIALOGUE_BOTTOM_BAND``。"""
     scale = 0.92 + 0.08 * max(0.0, min(1.0, size_fac))
     w = width * scale
     h = height * scale
     x = anchor_px[0] - w * 0.5
     y = anchor_px[1] - h
     margin = 6.0
+    if y < margin and below_px is not None:
+        y = below_px
+    floor = screen[1] * (1.0 - C.DIALOGUE_BOTTOM_BAND)
     x = max(margin, min(screen[0] - margin - w, x))
-    y = max(margin, min(screen[1] - margin - h, y))
+    y = max(margin, min(floor - h, y))
     return QRectF(x, y, w, h)
 
 
 def draw_bubble(painter: QPainter, *, text: str, size_fac: float,
                 anchor: tuple[float, float],
-                screen: tuple[float, float]) -> QRectF | None:
+                screen: tuple[float, float], below: float | None = None) -> QRectF | None:
     """在**屏幕像素**坐标系里画一个气泡（调用方不要预先 scale）。
 
     ``anchor`` 是屏幕 px 的底边中点；``text`` 是**已经按打字机截断过**的可见文本。
@@ -142,7 +146,7 @@ def draw_bubble(painter: QPainter, *, text: str, size_fac: float,
     lines, text_w, text_h = layout(painter, text, max_width=avail)
     box_w = text_w + 2 * C.DIALOGUE_PAD_X
     box_h = text_h + 2 * C.DIALOGUE_PAD_Y
-    rect = bubble_rect(anchor, box_w, box_h, size_fac, screen)
+    rect = bubble_rect(anchor, box_w, box_h, size_fac, screen, below)
 
     path = QPainterPath()
     path.addRoundedRect(rect, C.DIALOGUE_CORNER, C.DIALOGUE_CORNER)
@@ -173,8 +177,9 @@ def draw_bubble(painter: QPainter, *, text: str, size_fac: float,
 
 def draw_bubble_world(painter: QPainter, *, text: str, size_fac: float,
                       anchor_sim: tuple[float, float], scale: float,
-                      screen: tuple[float, float]) -> QRectF | None:
-    """``anchor_sim`` 是仿真 px；**这里是唯一一次坐标转换**（审计 A1）。"""
+                      screen: tuple[float, float], below_sim: float | None = None) -> QRectF | None:
+    """``anchor_sim`` / ``below_sim`` 是仿真 px；**这里是唯一一次坐标转换**（审计 A1）。"""
     anchor_px = (anchor_sim[0] * scale, anchor_sim[1] * scale)
+    below = below_sim * scale if below_sim is not None else None
     return draw_bubble(painter, text=text, size_fac=size_fac, anchor=anchor_px,
-                       screen=screen)
+                       screen=screen, below=below)

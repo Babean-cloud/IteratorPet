@@ -1169,13 +1169,22 @@ class SimulationState:
         """给渲染层的气泡数据。``anchor`` 是**仿真 px**，转换在绘制前做一次（审计 A1）。"""
         if not self.dialogue.text:
             return None
-        # tile 必须用缆线插口自己那个（轨道矩形高/28），不是腔室高/28
-        socket = self.cord.socket
+        # 用户 2026-11-01：不再钉在屏幕下方（底边是输入法 / 终端的地方），改成跟着人偶：
+        # 默认在人偶上方；滑车在左 / 右墙时往背离墙的一侧偏，免得压在机械臂上；
+        # 上面放不下由渲染层翻到人偶下方（below），并且整体不进底部那条带子。
+        head = self.creature.chunk0
+        base = self.rail.pose(self.frame_pos).point
+        x, _, w, _ = self._bounds
+        shift = 0.0
+        if base[0] - x < 0.15 * w:
+            shift = C.DIALOGUE_SIDE_SHIFT
+        elif x + w - base[0] < 0.15 * w:
+            shift = -C.DIALOGUE_SIDE_SHIFT
         return {
             "text": self.dialogue.visible_text(),
             "size_fac": float(self.dialogue.size_fac),
-            "anchor": (socket[0],
-                       socket[1] - C.DIALOGUE_ANCHOR_TILES_UP * self.cord.tile),
+            "anchor": (head[0] + shift, head[1] - C.DIALOGUE_HEAD_GAP),
+            "below": head[1] + C.DIALOGUE_HEAD_GAP,
         }
 
     def status(self) -> dict:

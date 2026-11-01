@@ -670,7 +670,9 @@ DIALOGUE_LINE_SPACING = 1.35
 DIALOGUE_MAX_LINES = 3
 DIALOGUE_MAX_CHARS = 40.0            # 宽度上限（以"40 个汉字"折算）
 DIALOGUE_MAX_WIDTH_RATIO = 0.55      # 同时不超过腔室宽的 55%
-DIALOGUE_ANCHOR_TILES_UP = 2.0       # og.cs 的 tile = 腔室高/28（见缆线插口换算）
+DIALOGUE_HEAD_GAP = 70.0             # 气泡离人偶身体多远（仿真 px）
+DIALOGUE_SIDE_SHIFT = 80.0           # 滑车在侧墙时往背离墙的方向偏多少（仿真 px）
+DIALOGUE_BOTTOM_BAND = 0.2           # 屏幕底部这一截（输入法 / 终端 / 任务栏）气泡不进
 DIALOGUE_PAD_X = 14.0                # 内边距（屏幕 px）
 DIALOGUE_PAD_Y = 10.0
 DIALOGUE_CORNER = 7.0                # UIroundedCorner 是 7x7（HUD.DialogBox 实测）

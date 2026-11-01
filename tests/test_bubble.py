@@ -64,9 +64,9 @@ def test_explicit_newlines_are_respected():
 # 位置（无 Qt）
 # --------------------------------------------------------------------------
 def test_bubble_rect_sits_above_the_anchor_and_is_centred():
-    rect = bubble_rect((400.0, 500.0), 200.0, 60.0, 1.0, (800.0, 600.0))
+    rect = bubble_rect((400.0, 400.0), 200.0, 60.0, 1.0, (800.0, 600.0))
     assert abs((rect.left() + rect.right()) * 0.5 - 400.0) < 0.01
-    assert abs(rect.bottom() - 500.0) < 0.01
+    assert abs(rect.bottom() - 400.0) < 0.01
 
 
 def test_bubble_rect_is_clamped_into_the_screen():

@@ -18,7 +18,8 @@ from ..brain import commands as cmd
 from .ui_theme import FAINT, GAP_S, MEDIUM_GREY, NAMES, RED_HOVER, SHADOW, _paint_frame
 
 HISTORY_KEEP = 50
-HOLO_MARGIN = 16                              # 全息皮肤的内边距（没有阴影，只留给括线和呼吸）
+USE_HOLO_SKIN = False                          # 输入条做成监视者投影的样式（用户 2026-11-01 关掉了）
+HOLO_MARGIN = 16                             # 全息皮肤的内边距（没有阴影，只留给括线和呼吸）
 
 
 def execute(pet, line: str) -> tuple[bool, str]:
@@ -259,10 +260,12 @@ class QuickBar(QWidget):
 
     # -- 皮肤 -------------------------------------------------------------------
     def apply_skin(self) -> None:
-        """按 ``pet.overseer_enabled`` 切换：全息皮肤（背景透明、监视者主色的字）或原来的窗口样式。"""
+        """全息皮肤（背景透明、监视者主色的字）或原来的窗口样式。
+
+        用户 2026-11-01：输入条一律用原来的弹窗样式，不再做成监视者投影（``USE_HOLO_SKIN`` 留着以后想恢复）。"""
         from ..rendering.overseer import MAIN_COLORS
 
-        holo = bool(getattr(self.pet, "overseer_enabled", False))
+        holo = USE_HOLO_SKIN and bool(getattr(self.pet, "overseer_enabled", False))
         self._holo_color = MAIN_COLORS.get(self.pet.character, MAIN_COLORS["pebbles"])
         self.holo = holo
         margin = HOLO_MARGIN if holo else SHADOW + 12

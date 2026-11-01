@@ -114,7 +114,19 @@ def test_higher_priority_projection_hides_the_bar():
     assert not win.projections.has("input") and win.projections.current.kind == "approval"
 
 
+def test_quick_bar_stays_a_plain_popup_even_with_overseer_on():
+    _app()
+    screen = SimpleNamespace(availableGeometry=lambda: __import__("PySide6.QtCore", fromlist=["QRect"]).QRect(0, 0, 1920, 1080))
+    pet = SimpleNamespace(character="pebbles", overseer_enabled=True, scale=1.5, _drawn_state=None, screen=lambda: screen,
+                          x=lambda: 0, y=lambda: 0, director=None)
+    bar = quick_bar.QuickBar(pet)
+    bar.popup()
+    assert not bar.holo and bar.styleSheet() == ""
+    bar.hide()
+
+
 def test_quick_bar_skin_follows_overseer_switch(monkeypatch):
+    monkeypatch.setattr(quick_bar, "USE_HOLO_SKIN", True)          # 皮肤代码还留着，开关打开时照旧可用
     _app()
     screen = SimpleNamespace(availableGeometry=lambda: __import__("PySide6.QtCore", fromlist=["QRect"]).QRect(0, 0, 1920, 1080))
     pet = SimpleNamespace(character="past_moon", overseer_enabled=True, scale=1.5, _drawn_state=None, screen=lambda: screen,

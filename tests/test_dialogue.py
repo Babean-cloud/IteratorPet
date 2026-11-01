@@ -156,21 +156,22 @@ def test_reset_clears_cooldowns_so_a_new_character_can_speak():
 # --------------------------------------------------------------------------
 # 接线：仿真层里的锚点与"事件 → 台词"
 # --------------------------------------------------------------------------
-def test_bubble_anchor_is_two_tiles_above_the_cord_socket():
+def test_bubble_follows_the_puppet_and_never_enters_the_bottom_band():
+    from iterator_pet.rendering.bubble import bubble_rect
     from iterator_pet.simulation.state import SimulationState
 
-    for scale in (0.6, 1.5, 2.25):
-        bounds = (0.0, 0.0, 1707.0 / scale, 912.0 / scale)
-        sim = SimulationState(bounds, warmup=0)
-        sim.dialogue.start("你还在这里吗？")
-        sim.step(0.025)
-        view = sim.dialogue_view()
-        assert view is not None
-        socket, tile = sim.cord.socket, sim.cord.tile
-        assert abs(view["anchor"][0] - socket[0]) < 1e-9
-        assert abs(view["anchor"][1] - (socket[1] - C.DIALOGUE_ANCHOR_TILES_UP * tile)) < 1e-9
-        # 屏幕空间里应当落在下方（用户要的"屏幕正中下方"）
-        assert view["anchor"][1] * scale > 0.85 * 912.0, (scale, view["anchor"])
+    sim = SimulationState((0.0, 0.0, 1138.0, 608.0), warmup=0)
+    sim.dialogue.start("你还在这里吗？")
+    sim.step(0.025)
+    view = sim.dialogue_view()
+    head = sim.creature.chunk0
+    assert view["anchor"][1] == head[1] - C.DIALOGUE_HEAD_GAP and view["below"] == head[1] + C.DIALOGUE_HEAD_GAP
+    assert abs(view["anchor"][0] - head[0]) <= C.DIALOGUE_SIDE_SHIFT
+    screen = (1707.0, 912.0)
+    low = bubble_rect((800.0, 900.0), 300.0, 80.0, 1.0, screen)            # 人偶贴着底边
+    assert low.bottom() <= screen[1] * (1 - C.DIALOGUE_BOTTOM_BAND) + 1e-6
+    flipped = bubble_rect((800.0, 40.0), 300.0, 80.0, 1.0, screen, below_px=180.0)   # 上面放不下：翻到下面
+    assert flipped.top() == 180.0
 
 
 def test_dragging_makes_the_pet_say_its_drag_line(tmp_path):
