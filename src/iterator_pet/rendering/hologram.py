@@ -1,10 +1,11 @@
 """监视者的全息投影面板：离屏绘制 + 错动 / 扫描线 / 闪缺合成（design §2.3、§3.3）。
 
-风格是用户认可的效果图（``tools/overseer_mockup.py`` 的 ``hologram`` / ``holo_effect`` / ``place_panel`` / ``beam``）直接搬过来的：
-单色、字发光、很淡的底色 + 四角括线（原作全息没有框，加它是为了压在花桌面上也读得清）。
+面板的版式是用户认可的效果图（``tools/overseer_mockup.py`` 的 ``hologram`` / ``place_panel`` / ``beam``）：
+单色、字发光、很淡的底色 + 边框线。
 
-字体渲染贵，所以**内容变了才重画面板**（``render_panel``）；每帧只做贴条合成（``Hologram.frame``）。
-强错动只在出现 / 消失的头 ``STRONG_TICKS`` 个 tick（0.3 s），平时只留淡扫描线，保证中文好读。
+字体渲染贵，所以**内容变了才重画面板**（``render_panel``）；每帧只做溶解遮罩（``Hologram.frame``）。
+"闪烁"照原版着色器（``HologramImage.shader``）：噪声遮罩连续滚动，边上破洞最密、中间几乎不丢，
+淡入淡出 = 溶出来 / 溶没了。不再有行错位和定时故障（用户 2026-11-01：那是我凭印象加的，节奏不对）。
 
 第二期：按钮圆有名字（``Button.name``，点击分发用）、字形（``glyph``，自己画，不依赖游戏素材）和左右分组；
 长文用 ``ScrollPanel``（固定高度的取景窗，文字按偏移慢慢上滚）。
@@ -13,16 +14,15 @@
 from __future__ import annotations
 
 import math
-import random
 from dataclasses import dataclass
 
+import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QImage, QLinearGradient, QPainter, QPainterPath, QPen
 
 WARN_COLOR = (1.0, 0.35, 0.25)          # 危险提示用红
-STRONG_TICKS = 12                       # 出现 / 消失时强效果持续多久（40 TPS 下 0.3 s）
-GLITCH_PERIOD = 40 * 3                  # 平时每隔多久闪一次故障（tick）
-GLITCH_TICKS = 3                        # 一次故障闪几帧
+TPS = 40
+STRONG_TICKS = 24                       # 出现 / 消失的溶解持续多久（40 TPS 下 0.6 s）；站稳之后按钮才可点
 BACKING_ALPHA = 0.62                    # 面板暗底的不透明度（越大背后的字越看不见）
 SCAN_STEP = 3                          # 隔几个像素压一条暗扫描线
 PAD_X, PAD_Y = 16, 14
@@ -202,35 +202,99 @@ def draw_backdrop(p: QPainter, width: float, height: float, color, x: float = 0.
     p.drawPath(shape)
     p.restore()
     if edge:
-        draw_edge(p, width, height, color, random.Random(0), x, y)
+        draw_edge(p, width, height, color, 0.0, 0, x, y)
 
 
-def draw_edge(p: QPainter, width: float, height: float, color, rng: random.Random,
+def _drift(t: float, seed: int, amp: float) -> tuple[float, float]:
+    """平滑的小位移：几个频率的正弦叠起来（周期 1–7 s），像原版 ``panPos`` 那种慢悠悠的随机游走，但可复现、不跳。"""
+    a = seed * 1.7
+    return (amp * (0.6 * math.sin(0.9 * t + a) + 0.3 * math.sin(2.3 * t + 2 * a + 1) + 0.1 * math.sin(5.1 * t + a)),
+            amp * (0.6 * math.sin(0.7 * t + 3 * a + 2) + 0.3 * math.sin(1.9 * t + a + 4) + 0.1 * math.sin(4.3 * t)))
+
+
+def draw_edge(p: QPainter, width: float, height: float, color, t: float = 0.0, seed: int = 0,
               x: float = 0.0, y: float = 0.0) -> None:
     """原版投影框的边（用户 2026-11-01 给的游戏截图）：一条清楚的细线 + 一条错开几像素的淡残影，
-    两条都随帧轻微位移；偶尔一段缺掉。不糊。"""
+    两条都随时间平滑地轻微漂移。边上的断口不是画出来的——是后面 ``dissolve`` 的噪声遮罩在边上最密地挖出来的（和原版同源）。"""
     p.save()
     p.setBrush(Qt.BrushStyle.NoBrush)
-    main = panel_shape(width, height, x + rng.uniform(-0.8, 0.8), y + rng.uniform(-0.8, 0.8))
-    pen = QPen(qcolor(color, rng.uniform(0.75, 0.95), 1.15), 1.2)
-    # 断点密一些、四条边都有（用户 2026-11-01）：长短不一的几段循环，起点随机，每次位移的断口都不一样
-    dashes = []
-    for _ in range(6):
-        dashes += [rng.uniform(18, 70) / 1.2, rng.uniform(2, 9) / 1.2]
-    pen.setDashPattern(dashes)
-    pen.setDashOffset(rng.uniform(0, sum(dashes)))
-    p.setPen(pen)
-    p.drawPath(main)
-    ghost = panel_shape(width, height, x + rng.choice((-1, 1)) * rng.uniform(1.5, 3.0),
-                        y + rng.choice((-1, 1)) * rng.uniform(1.0, 2.5))
-    p.setPen(QPen(qcolor(color, rng.uniform(0.3, 0.5)), 1.0))
-    p.drawPath(ghost)
+    dx, dy = _drift(t, seed, 0.8)
+    p.setPen(QPen(qcolor(color, 0.9, 1.15), 1.2))
+    p.drawPath(panel_shape(width, height, x + dx, y + dy))
+    gx, gy = _drift(t + 3.1, seed + 5, 0.7)
+    p.setPen(QPen(qcolor(color, 0.4), 1.0))
+    p.drawPath(panel_shape(width, height, x + 2.2 + gx, y - 1.6 + gy))
     p.restore()
 
 
 EDGE_MARGIN = 5.0                       # 面板四周留给边线位移的余量
 CUT = 12.0                              # 八边形切角
-EDGE_VARIANTS, EDGE_HOLD = 12, 1        # 边线预先画几种位移；每种停几个 tick 再换（每 tick 都换 = 抖得勤）
+
+# ---- 溶解遮罩：照 Hologram 系着色器（StreamingAssets/shaders/HologramImage.shader）----
+# 原版的"闪"不是行错位，也不是定时故障：每个像素按一张噪声图取值 h，h 超过阈值就丢掉。噪声图随游戏时间连续滚动
+# （纵向 _RAIN*10 = 每秒 2 个 UV），所以破洞是连续漂移的；离中心越远指数越小（越容易被丢），所以边上洞最密，
+# 中间几乎不丢；淡入淡出 = 阈值 × alpha 在变，面板是被"溶"出来、"溶"没的。
+BLOCK = 2                               # 遮罩的块大小（屏幕像素）：原版按像素量化，颗粒是块状的
+NOISE_N = 256                           # 噪声图边长（原版 _NoiseTex2 也是 256）
+THRESHOLD = 0.65                        # 游戏里 _hologramThreshold（render scale 为 1 时）
+SCROLL_UV_PER_SEC = 2.0                 # 噪声纵向滚动速度：_RAIN = shadersTime/5，shader 里 _RAIN*10
+ROW_SCROLL = 0.03                       # 隔三行加亮那一组行的滚动速度：_RAIN*0.15
+DST_SCALE = 0.95                        # 面板边框线落在"距离"0.93 左右：边上有断口但大体是一条清楚的细线（不是一圈点）
+EDGE_POW = 8.0                         # 距离中心的"圆度"：原版是椭圆，面板是矩形，用高次范数让角上的字别被溶掉
+
+_NOISE = None
+
+
+def _noise():
+    """噪声图：轻微模糊的随机噪声，均值 0.5、标准差 0.2（和游戏的噪声图统计一致）；不是游戏素材，自己生成的。"""
+    global _NOISE
+    if _NOISE is None:
+        n = np.random.default_rng(20261101).random((NOISE_N, NOISE_N), dtype=np.float32)
+        n = (n + np.roll(n, 1, 0) + np.roll(n, -1, 0) + np.roll(n, 1, 1) + np.roll(n, -1, 1)) / 5
+        n = (n - n.mean()) / n.std() * 0.197 + 0.505
+        _NOISE = np.clip(n, 0.0, 1.0).astype(np.float32)
+    return _NOISE
+
+
+class _Dissolve:
+    """一个尺寸的面板的溶解遮罩（不随时间变的那部分算一次）。"""
+
+    def __init__(self, width: int, height: int):
+        self.w, self.h = width, height
+        bw, bh = -(-width // BLOCK), -(-height // BLOCK)
+        u = (np.arange(bw, dtype=np.float32) + 0.5) / bw
+        self.v = (np.arange(bh, dtype=np.float32) + 0.5) / bh
+        self.xi = (u * 4 * NOISE_N).astype(np.int64) % NOISE_N
+        ax, ay = np.abs(2 * u - 1)[None, :], np.abs(2 * self.v - 1)[:, None]
+        norm = (ax ** EDGE_POW + ay ** EDGE_POW) ** (1 / EDGE_POW)
+        self.dst = np.clip(norm * DST_SCALE, 0.0, 1.0).astype(np.float32)
+
+    def keep(self, t: float, alpha: float) -> np.ndarray:
+        """(h, w) 的布尔遮罩：True = 这个像素留着。``t`` 秒，``alpha`` 0..1（淡入淡出）。"""
+        if alpha <= 0.0:
+            return np.zeros((self.h, self.w), dtype=bool)
+        yi = (self.v * 8 * NOISE_N - t * SCROLL_UV_PER_SEC * NOISE_N).astype(np.int64) % NOISE_N
+        h = _noise()[yi[:, None], self.xi[None, :]].copy()
+        stripe = np.round((self.v - t * ROW_SCROLL) * 400) % 3 == 0              # 隔三行
+        h[stripe] += 0.25 + (0.05 - 0.25) * alpha
+        e0 = 0.5 + 9.5 * alpha                                                   # lerp(0.5, 10, alpha)
+        h = h ** (e0 + (0.5 - e0) * self.dst)
+        keep = h <= THRESHOLD * alpha
+        return np.repeat(np.repeat(keep, BLOCK, 0), BLOCK, 1)[: self.h, : self.w]
+
+
+def dissolve(img: QImage, mask: np.ndarray) -> QImage:
+    """把遮罩为 False 的像素清成全透明（img 必须是 ARGB32_Premultiplied）。"""
+    out = QImage(img)
+    arr = np.ndarray((out.height(), out.width(), 4), np.uint8, buffer=out.bits(),
+                     strides=(out.bytesPerLine(), 4, 1))
+    arr[~mask] = 0
+    return out
+
+
+def smooth(x: float) -> float:
+    x = max(0.0, min(1.0, x))
+    return x * x * (3 - 2 * x)
 
 
 def _begin(width: int, height: int, color) -> tuple[QImage, QPainter]:
@@ -312,30 +376,6 @@ def _draw_button(p: QPainter, rect: QRectF, button: Button, color) -> None:
                button.label)
 
 
-def holo_effect(img: QImage, rng: random.Random, jitter_rows=(), scan: int = SCAN_STEP,
-                drop: float = 0.035) -> QImage:
-    """Hologram.shader 的观感：几段行左右错开、零星缺行、隔 ``scan`` 像素压一条暗线。"""
-    out = QImage(img.size(), QImage.Format.Format_ARGB32_Premultiplied)
-    out.fill(Qt.GlobalColor.transparent)
-    p = QPainter(out)
-    y = 0
-    while y < img.height():
-        h = rng.randint(2, 9)
-        dx = 0
-        if any(a <= y < b for a, b in jitter_rows):
-            dx = rng.choice([-6, -4, -3, 3, 4, 7])
-        if rng.random() < drop:
-            y += h
-            continue                                       # 闪缺
-        p.drawImage(QPointF(dx, y), img, QRectF(0, y, img.width(), h))
-        y += h
-    p.setCompositionMode(QPainter.CompositionMode.CompositionMode_DestinationOut)
-    for sy in range(0, out.height(), scan):
-        p.fillRect(QRectF(0, sy, out.width(), 1), QColor(0, 0, 0, 70))
-    p.end()
-    return out
-
-
 def scanlines(img: QImage, scan: int = SCAN_STEP) -> QImage:
     """只压扫描线（滚动文字每 tick 都要重合成，不能每次都做整套错动）。"""
     out = QImage(img)
@@ -348,7 +388,8 @@ def scanlines(img: QImage, scan: int = SCAN_STEP) -> QImage:
 
 
 class Hologram:
-    """一块面板的动画：出现 / 消失的头 0.3 s 强错动 + 淡入淡出，其余时间是缓存好的淡扫描线版本。"""
+    """一块面板的动画：整块面板是一张底图，每帧用连续滚动的噪声遮罩溶掉一部分像素（见 ``_Dissolve``）。
+    出现 = 从全溶到不溶（``STRONG_TICKS`` 个 tick 内淡入），消失反过来；站稳后只剩边上和零星的破洞在漂。"""
 
     scrolling = False
 
@@ -356,84 +397,39 @@ class Hologram:
         self.image = image
         self.seed = seed
         self.color = color                       # 给了才画会动的边（draw_edge）
-        self._edged: dict[tuple, QImage] = {}
-        self._calm: QImage | None = None
-        self._strong: dict[int, QImage] = {}
-        self._glitch: dict[int, QImage] = {}
+        self._scanned: QImage | None = None
+        self._dissolve = _Dissolve(image.width(), image.height())
 
-    def _jitter_rows(self, rng: random.Random) -> list[tuple[int, int]]:
-        """每次随机挑 1–3 段整体错开的行带，高度按面板比例。"""
-        h = self.image.height()
-        rows = []
-        for _ in range(rng.randint(1, 3)):
-            top = rng.randint(0, max(0, h - 12))
-            rows.append((top, top + rng.randint(6, max(7, h // 5))))
-        return rows
-
-    def _strong_frame(self, step: int) -> QImage:
-        frame = self._strong.get(step)
-        if frame is None:
-            rng = random.Random(self.seed * 1000 + step)
-            frame = holo_effect(self.image, rng, self._jitter_rows(rng), drop=0.12)
-            self._strong[step] = frame
-        return frame
+    def _base(self, offset: float) -> QImage:
+        if self._scanned is None:
+            self._scanned = scanlines(self.image)
+        return self._scanned
 
     def frame(self, age: int, leaving: int | None = None, offset: float = 0.0) -> tuple[QImage, float]:
         """返回 (这一帧的图, 不透明度)。``age`` 出现后过了几个 tick；``leaving`` 开始消失后过了几个 tick（没消失 = None）。
-        ``offset`` 只给滚动面板用，普通面板忽略。"""
-        image, opacity = self._frame(age, leaving, offset)
-        return self.with_edge(image, age if leaving is None else leaving), opacity
-
-    def with_edge(self, image: QImage, tick: int, cache: bool = True) -> QImage:
-        """在这一帧上加会动的细边；同一张底图的几种位移缓存着（滚动面板每帧新图，不缓存）。"""
-        if self.color is None:
-            return image
-        variant = (tick // EDGE_HOLD + self.seed) % EDGE_VARIANTS
-        key = (image.cacheKey(), variant)
-        if cache and key in self._edged:
-            return self._edged[key]
-        out = QImage(image)
-        p = QPainter(out)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        draw_edge(p, out.width(), out.height(), self.color, random.Random(self.seed * 131 + variant))
-        p.end()
-        if cache:
-            if len(self._edged) > 64:
-                self._edged.clear()
-            self._edged[key] = out
-        return out
-
-    def _frame(self, age: int, leaving: int | None = None, offset: float = 0.0) -> tuple[QImage, float]:
+        ``offset`` 只给滚动面板用，普通面板忽略。淡入淡出全靠溶解，不透明度恒为 1（消失完了是 0）。"""
         if leaving is not None:
             if leaving >= STRONG_TICKS:
-                return self._strong_frame(0), 0.0
-            return self._strong_frame(leaving), 1.0 - leaving / STRONG_TICKS
-        if age < STRONG_TICKS:
-            return self._strong_frame(age), min(1.0, 0.25 + age / STRONG_TICKS)
-        if self._calm is None:
-            self._calm = holo_effect(self.image, random.Random(self.seed), (), drop=0.0)
-        return self._idle(age)
-
-    def _idle(self, age: int) -> tuple[QImage, float]:
-        """站稳以后的故障感（用户 2026-11-01）：大部分时间微微呼吸，隔几秒闪暗一下、错开一段行。
-        闪的时机按面板 seed 错开，两只监视者不会同时闪；只闪 GLITCH_TICKS 帧，不影响读字。"""
-        breath = 0.9 + 0.06 * math.sin(age * 0.11 + self.seed)
-        phase = (age + self.seed * 37) % GLITCH_PERIOD
-        if phase < GLITCH_TICKS:
-            frame = self._glitch.get(phase)
-            if frame is None:
-                rng = random.Random(self.seed * 7919 + phase)
-                frame = holo_effect(self.image, rng, self._jitter_rows(rng)[:1], drop=0.04)
-                self._glitch[phase] = frame
-            return frame, (0.45, 0.8, 0.6)[phase % 3]
-        return self._calm, breath
+                return self._base(offset), 0.0
+            alpha = 1.0 - smooth(leaving / STRONG_TICKS)
+        else:
+            alpha = smooth(age / STRONG_TICKS)
+        t = age / TPS + self.seed * 13.7             # 不同面板的噪声相位不同
+        image = self._base(offset)
+        if self.color is not None:
+            image = QImage(image)
+            p = QPainter(image)
+            p.setRenderHint(QPainter.RenderHint.Antialiasing)
+            draw_edge(p, image.width(), image.height(), self.color, t, self.seed)
+            p.end()
+        return dissolve(image, self._dissolve.keep(t, alpha)), 1.0
 
 
 class ScrollPanel(Hologram):
     """长文：固定高度的取景窗，正文按像素偏移上滚（偏移由调用方按时间算）。
 
     布局：标题行 / 取景窗（``view_lines`` 行高）/ 一行小字提示。取景窗上下各留一点渐隐，字不会硬切。
-    出现 / 消失的强错动用偏移 0 的那一帧；平时每帧只合成一次 + 压扫描线。"""
+    每帧按偏移重新合成，再过一遍溶解遮罩。"""
 
     scrolling = True
     FADE = 14
@@ -495,11 +491,8 @@ class ScrollPanel(Hologram):
         """取景窗在面板里的位置（点击展开用整块面板，这里留给测试 / 悬停判断）。"""
         return QRectF(0, self._head_h, self._width, self.view_h)
 
-    def frame(self, age: int, leaving: int | None = None, offset: float = 0.0) -> tuple[QImage, float]:
-        if leaving is not None or age < STRONG_TICKS:
-            return super().frame(age, leaving)
-        return (self.with_edge(self._compose(offset), age, cache=False),
-                0.9 + 0.06 * math.sin(age * 0.11 + self.seed))
+    def _base(self, offset: float) -> QImage:
+        return self._compose(offset)
 
 
 def place_panel(w: float, h: float, body, head, inward, screen) -> QRectF:

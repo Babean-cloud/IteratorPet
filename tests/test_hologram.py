@@ -64,21 +64,55 @@ def test_scroll_panel_scrolls_within_range():
     assert short.max_offset == 0.0
 
 
-def test_frame_animation_phases():
+def _alive(img: QImage) -> int:
+    """图里还留着的（不透明的）像素数，隔点采样。"""
+    return sum(1 for y in range(0, img.height(), 2) for x in range(0, img.width(), 2) if img.pixelColor(x, y).alpha() > 0)
+
+
+def test_frame_dissolves_in_and_out_instead_of_shifting_rows():
     _app()
     holo = H.Hologram(H.render_panel(300, [H.Line("监视者" * 20)], COLOR), seed=3)
-    _, first = holo.frame(0)
-    calm = [a for a in range(H.STRONG_TICKS, H.STRONG_TICKS + H.GLITCH_PERIOD)
-            if (a + 3 * 37) % H.GLITCH_PERIOD >= H.GLITCH_TICKS]
-    _, settled = holo.frame(calm[0])
-    assert first < settled and 0.84 <= settled <= 0.96                               # 平时微微呼吸
-    assert holo.frame(calm[0])[0] is holo.frame(calm[50])[0]                         # 平时是同一张缓存图
-    glitch = next(a for a in range(H.STRONG_TICKS, 400) if (a + 3 * 37) % H.GLITCH_PERIOD == 0)
-    image, dim = holo.frame(glitch)
-    assert image is not holo.frame(calm[0])[0] and dim < 0.6                        # 隔几秒闪一下故障
-    assert holo.frame(5)[0] is holo.frame(5)[0]                                      # 强效果每步也缓存
+    start = _alive(holo.frame(0)[0])
+    mid = _alive(holo.frame(H.STRONG_TICKS // 2)[0])
+    settled = _alive(holo.frame(H.STRONG_TICKS + 5)[0])
+    assert start == 0 and 0 < mid < settled                                    # 一点点溶出来
     assert holo.frame(100, leaving=0)[1] == 1.0
+    leaving = _alive(holo.frame(100, leaving=H.STRONG_TICKS // 2)[0])
+    assert 0 < leaving < settled                                               # 溶没的过程
     assert holo.frame(100, leaving=H.STRONG_TICKS)[1] == 0.0
+    assert holo.frame(100)[0] == holo.frame(100)[0]                            # 同一 tick 同一画面（可复现）
+
+
+def test_dissolve_mask_is_sparse_in_the_middle_dense_at_the_edge_and_empty_at_zero_alpha():
+    mask = H._Dissolve(480, 300)
+    kept = mask.keep(1.0, 1.0)
+    assert kept.shape == (300, 480)
+    centre, rim = kept[90:210, 120:360], kept[:12]
+    assert centre.mean() > 0.97                                                # 中间几乎不丢，字读得清
+    assert rim.mean() < centre.mean() - 0.05                                   # 边上破洞最密
+    assert not mask.keep(1.0, 0.0).any()
+    half = mask.keep(1.0, 0.5)
+    assert half.mean() < kept.mean()                                           # 淡入中丢得更多
+
+
+def test_dissolve_drifts_continuously_with_time():
+    mask = H._Dissolve(480, 300)
+    a, b, c = mask.keep(2.0, 1.0), mask.keep(2.0 + 1 / 40, 1.0), mask.keep(2.0 + 0.2, 1.0)
+    step, later = (a != b).mean(), (a != c).mean()
+    assert 0 < step < 0.12                                                     # 每个 tick 只有一小部分像素变，不是整屏重洗
+    assert later > 0                                                           # 噪声在滚（滚一整张噪声图要 0.5 s，所以别拿整数秒比）
+    assert (mask.keep(2.0, 1.0) == a).all()                                    # 同一时刻可复现
+
+
+def test_noise_matches_the_game_statistics():
+    n = H._noise()
+    assert n.shape == (H.NOISE_N, H.NOISE_N) and abs(float(n.mean()) - 0.5) < 0.02 and 0.15 < float(n.std()) < 0.25
+
+
+def test_edge_drift_is_smooth():
+    steps = [H._drift(t / 40, 3, 0.8) for t in range(400)]
+    jumps = [abs(b[0] - a[0]) + abs(b[1] - a[1]) for a, b in zip(steps, steps[1:])]
+    assert max(jumps) < 0.2 and max(abs(s[0]) for s in steps) <= 0.8             # 每 tick 挪不到 0.2 px：没有跳变
 
 
 def test_place_panel_stays_on_screen_and_away_from_head():
