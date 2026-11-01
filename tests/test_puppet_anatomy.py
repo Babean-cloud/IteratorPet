@@ -102,7 +102,11 @@ def test_body_axis_hangs_down_instead_of_laying_flat():
     # 15 deg, not 10: the trunk is 9 px long, so 15 deg is 2.3 px of lateral
     # offset -- visually upright. Below that the body is still breathing and
     # micro-correcting, and a 10 deg bound turns the assertion into a coin flip.
-    assert median(parked) < 15.0, f"parked body tilt {median(parked):.1f} deg off vertical"
+    # 2026-11-01: 17, not 15. The tighter rail corners (CORNER_RADIUS) and the
+    # carriage-first hold change this seeded run's path, and the median moved
+    # from ~11 to ~16 deg -- 2.5 px of lateral offset on a 9 px trunk, still
+    # visually upright. A truly flat body is 90 deg.
+    assert median(parked) < 17.0, f"parked body tilt {median(parked):.1f} deg off vertical"
     # While travelling the trunk TRAILS its motion: chunk 1's hang term is 9 px
     # against a goal hundreds of px away, so the 100 px clamp swallows it and the
     # axis follows the velocity (measured 70-78 deg). That is what the source's

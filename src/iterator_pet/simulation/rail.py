@@ -62,7 +62,8 @@ class RailPath:
         )
         self.width = w
         self.height = h
-        self.radius = max(8.0, C.CORNER_BLEND * w)
+        # 圆角半径固定（用户 2026-11-01：原来的 0.1×边长太圆，换边时离墙太远）；参数上仍占 CORNER_BLEND
+        self.radius = max(8.0, min(C.CORNER_RADIUS, 0.25 * min(w, h)))
         self.edges = (
             (self.corners[0], self.corners[1]),
             (self.corners[1], self.corners[2]),

@@ -244,3 +244,20 @@ def test_the_carriage_can_actually_leave_a_large_chamber():
         share = moving / ticks
         assert share > 0.15, (
             f"{width:.0f}x{height:.0f}: carriage moved on only {share:.0%} of ticks")
+
+
+def test_long_hop_moves_the_carriage_first_and_never_straightens_the_arm():
+    """左墙 → 右墙（用户 2026-11-01：臂一拉直就卡在奇异点上）：滑车先开，人偶跟在臂长六成以内。"""
+    sim = SimulationState((0.0, 0.0, 1138.0, 608.0), start=(150.0, 300.0))
+    sim.set_territory("left")
+    for _ in range(400):
+        sim.step(0.025)
+    sim.set_territory("right")
+    worst, engaged = 0.0, False
+    for _ in range(1600):
+        sim.step(0.025)
+        base = sim.rail.pose(sim.frame_pos).point
+        worst = max(worst, C.dist(base, sim.creature.chunk0) / sum(C.ARM_LENGTHS))
+        engaged = engaged or sim._carriage_first
+    assert engaged and worst < 0.8, worst
+    assert sim.rail.pose(sim.frame_pos).point[0] > 1000 and sim.creature.chunk0[0] > 800     # 真的到了右边

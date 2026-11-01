@@ -160,11 +160,21 @@ BASE_STABLE_TICKS = 30         # consistentBasePosCounter > 30
 # follow once the puppet is further than this fraction of it, ignoring the
 # hysteresis and the stability gate. The source never needs it -- its room is
 # about one arm long; a 776x415 desktop chamber is wider.
-BASE_FOLLOW_ARM_RATIO = 0.90
-# How far from the carriage the puppet may aim: 0.95 of the 570 px arm. The old
-# 0.62 (353 px) was tuned while the carriage was stuck and could not follow, so
-# every full-screen destination pressed against it.
-ARM_REACH_RATIO = 0.95
+BASE_FOLLOW_ARM_RATIO = 0.80
+# How far from the carriage the puppet may aim. Was 0.95 of the 570 px arm; a
+# nearly straight arm is the IK singularity (the elbow can bend either way and
+# flips between them), which is where the puppet got stuck on long hops
+# (user 2026-11-01). 0.88 keeps a visible bend.
+ARM_REACH_RATIO = 0.88
+# Carriage first (user 2026-11-01): when the goal is further than ENTER x arm
+# from the carriage, the carriage drives toward it at full speed while the
+# puppet is held within LEAD x arm; released once it is back under EXIT x arm.
+CARRIAGE_FIRST_ENTER = 0.75
+CARRIAGE_FIRST_EXIT = 0.60
+CARRIAGE_FIRST_LEAD = 0.55
+# Rail corner arc radius in sim px. Was CORNER_BLEND x edge (114 px on a 1138 px
+# chamber, ~170 on screen), which read as a wide swing off the wall.
+CORNER_RADIUS = 48.0
 # How far a DESTINATION may be from the carriage when it is picked: 0.62 of the
 # arm's 570 px = 353 px. Tighter than the arm on purpose -- the trunk's hang term
 # is only 9 px (BODY_CONNECTION), so a goal much further away saturates chunk 1's

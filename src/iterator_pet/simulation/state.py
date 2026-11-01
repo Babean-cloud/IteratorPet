@@ -215,6 +215,7 @@ class SimulationState:
         self._refresh_thresholds()
         self.frame_pos = self.rail.project(self.wander.current)
         self.base_moving = False
+        self._carriage_first = False              # 远目标时滑车先开、人偶等着（_carriage_first_update）
         self.consistent_base_pos = 0
         self._dest_version = self.wander.version
         self._last_chunk0 = self.wander.current
@@ -916,6 +917,9 @@ class SimulationState:
 
             self.base_ideal = self.creature.chunk0
             ideal_f = self.rail.project_near(self.base_ideal, self.frame_pos)
+            carriage_first = self._carriage_first_update(get_to) and not swapping
+            if carriage_first:                   # 远目标：滑车直接往目标那边开，人偶先别冲
+                ideal_f = self.rail.project_near(get_to, self.frame_pos)
             # 地盘：人偶已经到了带子里 → 滑车锁到那条边的 [lo, hi] 段；不在段上就强制开过去
             off_station = False
             if self.territory is not None and self._in_territory(self.creature.chunk0):
@@ -938,7 +942,7 @@ class SimulationState:
             # source never needs this because its room (560x560) is about one arm
             # long; a 776x415 chamber is wider, so the carriage has to be allowed to
             # break its own hysteresis to stay within reach.
-            must_follow = gap > sum(C.ARM_LENGTHS) * C.BASE_FOLLOW_ARM_RATIO or off_station
+            must_follow = gap > sum(C.ARM_LENGTHS) * C.BASE_FOLLOW_ARM_RATIO or off_station or carriage_first
             reach = self.stop_threshold if self.base_moving else self.start_threshold
             self.base_moving = (must_follow or gap > reach) and (
                 must_follow or self.consistent_base_pos > C.BASE_STABLE_TICKS
@@ -975,6 +979,13 @@ class SimulationState:
         # still reachable -- it just takes two phases: the body pushes against the
         # reach limit, the carriage catches up, the limit slides out.
         pose = self.rail.pose(self.frame_pos)
+        if self._carriage_first and not swapping:
+            # 滑车优先：人偶只许在滑车 LEAD×臂长 以内朝目标方向够，等滑车开近了再放开
+            lead = sum(C.ARM_LENGTHS) * C.CARRIAGE_FIRST_LEAD
+            d = C.dist(pose.point, get_to)
+            if d > lead:
+                u = C.dir_vec(pose.point, get_to)
+                get_to = (pose.point[0] + u[0] * lead, pose.point[1] + u[1] * lead)
         # The destination was already clamped when it was picked, so ``get_to`` is
         # reachable; only the room has the last word (ClampVectorInRoom).
         if not swapping:                         # 荡出屏幕时不夹进腔室（要的就是出去）
@@ -1051,6 +1062,17 @@ class SimulationState:
             min(max(point[0], x + margin), x + w - margin),
             min(max(point[1], y + margin), y + h - margin),
         )
+
+    def _carriage_first_update(self, get_to: tuple[float, float]) -> bool:
+        """目标离滑车太远（远于 ENTER×臂长）就进入"滑车优先"，滑车开到 EXIT×臂长以内再退出（带迟滞）。
+        原来是人偶先冲、滑车被臂拽着跟，臂一拉直就卡在奇异点上（用户 2026-11-01）。"""
+        base = self.rail.pose(self.frame_pos).point
+        d = C.dist(base, get_to) / sum(C.ARM_LENGTHS)
+        if self._carriage_first:
+            self._carriage_first = d > C.CARRIAGE_FIRST_EXIT
+        else:
+            self._carriage_first = d > C.CARRIAGE_FIRST_ENTER
+        return self._carriage_first
 
     def _reachable(self, root: tuple[float, float], target: tuple[float, float]) -> tuple[float, float]:
         limit = sum(C.ARM_LENGTHS) * C.ARM_REACH_RATIO
