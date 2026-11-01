@@ -342,3 +342,16 @@ def test_cancel_while_waiting_for_approval(tmp_path):
     runner.cancel()
     assert _wait(lambda: task.approval is None)
     assert task.state == "cancelled"
+
+
+def test_energy_recovers_while_the_pet_was_offline(tmp_path):
+    from iterator_pet.brain.context import Context
+
+    clock = {"t": 1_000_000.0}
+    ctx = Context(tmp_path / "context.json", now=lambda: clock["t"])
+    ctx.energy = 0.1
+    ctx.save()
+    clock["t"] += 30 * 60                                   # 关了半小时：+0.3
+    assert abs(Context(tmp_path / "context.json", now=lambda: clock["t"]).energy - 0.4) < 1e-6
+    clock["t"] += 12 * 3600                                 # 关了一整晚：补满
+    assert Context(tmp_path / "context.json", now=lambda: clock["t"]).energy == 1.0

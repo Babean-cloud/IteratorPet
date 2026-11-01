@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import json
+import time
 from collections import deque
 from pathlib import Path
 
@@ -23,8 +24,9 @@ ACTIVITY_KEEP = 80
 
 
 class Context:
-    def __init__(self, path: Path | str | None = None):
+    def __init__(self, path: Path | str | None = None, now=time.time):
         self.path = Path(path) if path is not None else None
+        self.now = now                   # 墙钟：存盘时记下，启动时据此补上离线那段的精力恢复
         self.turns: deque[dict] = deque()
         self.activity: deque[str] = deque(maxlen=ACTIVITY_KEEP)
         self.since_reflect = 0
@@ -69,6 +71,13 @@ class Context:
             self.last_reflect = float(raw.get("last_reflect", 0.0))
             self.talk_scale = min(3.0, max(0.6, float(raw.get("talk_scale", 1.0))))
             self.energy = min(1.0, max(0.0, float(raw.get("energy", 0.8))))
+            # 下线的时候也在休息（用户 2026-11-01：关了十几个小时还是"累坏了"）：
+            # 按离线时长补上恢复量，和在线时"你不在 / 它在打盹"同一个速度
+            offline = self.now() - float(raw.get("saved_at", 0.0) or 0.0)
+            if raw.get("saved_at") and offline > 0:
+                from .relation import RECOVER_PER_HOUR
+
+                self.energy = min(1.0, self.energy + RECOVER_PER_HOUR * offline / 3600.0)
         except (TypeError, ValueError):
             pass
 
@@ -84,6 +93,7 @@ class Context:
             "since_reflect": self.since_reflect,
             "talk_scale": round(self.talk_scale, 3),
             "energy": round(self.energy, 3),
+            "saved_at": round(self.now(), 1),
             "relation": self.relation,
             "remarks": self.remarks,
             "activity": list(self.activity),
