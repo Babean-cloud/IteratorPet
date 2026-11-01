@@ -377,12 +377,9 @@ class AIPanel(FramedWindow):
                                           f"屏幕字 {ps['screen_chars']}（每小时清零）") if ps else None)
             said = st.get("last_said")
             rows.show_text("said", None if not said else
-                           f"{said['time']}「{said['text']}」
-因为：{said['why']}"
-                           + (f"
-当时在想：{said['thought']}" if said.get("thought") else "")
-                           + (f"
-当时在看：{said['window']}" if said.get("window") else ""))
+                           f"{said['time']}「{said['text']}」\n因为：{said['why']}"
+                           + (f"\n当时在想：{said['thought']}" if said.get("thought") else "")
+                           + (f"\n当时在看：{said['window']}" if said.get("window") else ""))
             rows.show_text("error", st["last_error"][:160] if st["last_error"] else
                            (st["ocr_error"][:160] if st["ocr_error"] else None))
 

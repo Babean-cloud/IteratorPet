@@ -1,4 +1,4 @@
-"""开机自启：写 ``HKCU\Software\Microsoft\Windows\CurrentVersion\Run``（只影响当前用户，不要管理员）。
+r"""开机自启：写 ``HKCU\Software\Microsoft\Windows\CurrentVersion\Run``（只影响当前用户，不要管理员）。
 
 发布版登记 ``启动.exe`` 本身；从源码跑时登记 ``pythonw -m iterator_pet.launcher``（要求包已 ``pip install -e .``）。
 启动器本来就不弹窗，所以开机自启就是静默启动。
