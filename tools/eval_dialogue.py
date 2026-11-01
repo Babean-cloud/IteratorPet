@@ -53,7 +53,15 @@ class Eyes:
 
     def screen_delta(self, full: bool = False):
         text = self.screen.get("text")
+        if self.screen.get("new") and not full:         # 场景里写了 new：只给新增行（看它会不会 read_screen 看全）
+            return {"screen_new": self.screen["new"]}
         return {"screen_text": text} if text else {}
+
+    def ocr_text(self, max_age=None):                   # read_screen 工具用
+        return self.screen.get("text")
+
+    def ocr_age(self):
+        return 5.0
 
 
 class Relay:
@@ -123,7 +131,7 @@ def run_one(sc: dict, client, tmp: Path) -> dict:
     deadline = time.time() + 90
     while director.busy and time.time() < deadline:
         time.sleep(0.05)
-    call = relay.calls[-1] if relay.calls else {"messages": []}
+    call = relay.calls[0] if relay.calls else {"messages": []}
     raw = None
     usage: dict = {}
     while not director._results.empty():
@@ -131,9 +139,18 @@ def run_one(sc: dict, client, tmp: Path) -> dict:
         if item[3]:
             raw = {"error": item[3]}
         else:
-            raw, usage = item[1], item[2] or {}
+            raw = item[1]
+            for one in (item[2] if isinstance(item[2], list) else [item[2] or {}]):   # 查了工具 = 好几次请求，加起来
+                for k, v in (one or {}).items():
+                    if isinstance(v, int):
+                        usage[k] = usage.get(k, 0) + v
+    interim = []
+    while not director._interim.empty():
+        interim.append(director._interim.get())
     sizes = [len(m["content"]) if isinstance(m["content"], str) else 0 for m in call["messages"]]
-    return {"id": sc["id"], "reply": raw, "usage": usage, "seconds": call.get("seconds"),
+    return {"id": sc["id"], "reply": raw, "usage": usage,
+            "seconds": round(sum(c.get("seconds") or 0 for c in relay.calls), 2),
+            "requests": len(relay.calls), "interim": interim,
             "prompt_chars": sizes, "expect": sc.get("expect", "")}
 
 
@@ -165,9 +182,12 @@ def main() -> None:
             reply = res["reply"] or {}
             print(f"== {res['id']}  prompt字数 {sum(res['prompt_chars'])} {res['prompt_chars']}"
                   f"  token {u.get('prompt_tokens', '-')}/{u.get('completion_tokens', '-')}"
-                  f"  命中 {u.get('prompt_cache_hit_tokens', '-')}  {res['seconds'] or ''}s")
+                  f"  命中 {u.get('prompt_cache_hit_tokens', '-')}  {res['seconds'] or ''}s  请求 {res['requests']} 次")
             if not args.dry:
-                for key in ("say", "thought", "mood", "plan", "remember", "learn", "remind", "errand", "task", "error"):
+                if res["interim"]:
+                    print(f"   先说: {res['interim']}")
+                for key in ("say", "thought", "mood", "plan", "remember", "learn", "remind", "errand", "task",
+                            "checked", "error"):
                     if reply.get(key) not in (None, "", []):
                         print(f"   {key}: {json.dumps(reply[key], ensure_ascii=False)[:200]}")
                 print(f"   期望: {res['expect']}")

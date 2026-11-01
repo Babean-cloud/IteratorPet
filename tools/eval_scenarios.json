@@ -279,5 +279,58 @@
       "MM": "MM课"
     },
     "expect": "say 里反问『你是说 MM 那个课程文件夹吗』；task 为 null（确认前不开工）"
+  },
+  {
+    "id": "tool_recall_old",
+    "desc": "很久以前说过的事已滑出对话窗口，用户问起",
+    "user": "我之前跟你说过我那个项目的名字，叫啥来着？",
+    "time": [
+      16,
+      0
+    ],
+    "affinity": 0.3,
+    "history": [
+      [
+        "user",
+        "我在做一个项目，名字叫青鸟计划，是给我们实验室做的数据标注工具"
+      ],
+      [
+        "pet",
+        "……青鸟。名字倒是挺好听。"
+      ]
+    ],
+    "filler": {
+      "history": 50
+    },
+    "expect": "用 need recall（或观察里已有 recall）查到『青鸟计划』后回答；不编造"
+  },
+  {
+    "id": "tool_screen_partial",
+    "desc": "自主：观察里只有新增的一行报错，想看全可以 read_screen",
+    "reason": "screen",
+    "time": [
+      15,
+      10
+    ],
+    "affinity": 0.3,
+    "last_spoke_min": 8,
+    "screen": {
+      "app": "WindowsTerminal",
+      "title": "pytest",
+      "new": "FAILED tests/test_io.py::test_save - AssertionError",
+      "text": "collected 42 items / tests/test_io.py ....F / def test_save(): / >       assert load(p) == data / E       AssertionError: assert {'a': 1} == {'a': 1, 'b': 2} / FAILED tests/test_io.py::test_save - AssertionError / 1 failed, 41 passed"
+    },
+    "expect": "可以 read_screen 看全再说具体的（少了 b 这个键），也可以不开口；不该编造细节"
+  },
+  {
+    "id": "tool_no_need",
+    "desc": "普通寒暄不该查工具",
+    "user": "晚上好呀",
+    "time": [
+      20,
+      0
+    ],
+    "affinity": 0.4,
+    "expect": "直接回应，请求 1 次，不填 need"
   }
 ]

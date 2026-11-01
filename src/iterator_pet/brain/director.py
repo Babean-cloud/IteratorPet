@@ -99,6 +99,15 @@ def parse_action(text: str) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def _text_only(message: dict) -> dict:
+    """消息里如果有图块，只留文字（查工具的后几轮用普通模型，带着图会被拒）。"""
+    content = message.get("content")
+    if isinstance(content, list):
+        text = "".join(part.get("text", "") for part in content if isinstance(part, dict))
+        return dict(message, content=text)
+    return message
+
+
 def say_gap(talkativeness: float) -> float:
     """自主说话的最小间隔（秒）：话量 0 → 170 s，0.5 → 100 s，1 → 30 s。
 
@@ -176,6 +185,7 @@ class Director:
         self.talkativeness = float(talkativeness)
         self.planner = Planner(clock, on_territory, say_fn=self._planned_say)
         self._results: queue.Queue = queue.Queue()
+        self._interim: queue.Queue = queue.Queue()   # 查东西前先说的那句（"等等，我看看"）
         self._busy = False
         self._pending_chat: list[tuple[str, bytes | None, bool]] = []
         self._force_reflect = False
@@ -833,6 +843,11 @@ class Director:
                 image = lambda: eyes.capture_vision(mode, key)
         if extra:
             obs.update(extra)
+        tools = None
+        if reason not in ("pearl", "reflect"):
+            tools = self._chat_tools(image)
+            if tools.can_look:
+                obs["can_look"] = True
         window, older = self._chat_window()
         fold_upto = None
         if len(older) >= FOLD_BATCH:
@@ -882,54 +897,133 @@ class Director:
             ctx.reflections += 1
             ctx.last_reflect = self.wall().timestamp()
         threading.Thread(
-            target=self._run, args=(reason, messages, brief, fold_upto, image, user_text), daemon=True
+            target=self._run, args=(reason, messages, brief, fold_upto, image, user_text, tools), daemon=True
         ).start()
 
-    def _run(self, reason: str, messages: list[dict], brief: str, fold_upto, image=None,
-             user_text: str | None = None) -> None:
-        """工作线程：只做 HTTP，不碰仿真、记忆、上下文。"""
-        try:
-            longer = fold_upto is not None or reason == "pearl" or callable(image)
-            reply = None
-            screen_capture = callable(image) or isinstance(image, bytes)
-            if callable(image):
-                try:
-                    image = image()
-                except Exception as exc:                   # noqa: BLE001
-                    _log(f"当前窗口截图失败，只读字：{type(exc).__name__}: {exc}")
-                    image = None
-                if image is None:
-                    messages = messages[:-1] + [dict(messages[-1], content=messages[-1]["content"]
-                        + "\n（当前窗口截图未取得；只能依据本地文字回答。）")]
-            if image is not None:
-                # 图只能放在 user 消息里：最后一条换成 [文字, 图]。看图模型不认 / 出错就退回只读字
-                import base64
+    def _chat_tools(self, image):
+        """这次请求能用的只读工具（chat_tools.py）。看图只在开了看图、前台不是隐私窗口、
+        这次没有已经附图时给。"""
+        from .chat_tools import ChatTools
 
-                try:
-                    data = base64.b64encode(image if isinstance(image, bytes) else image.read_bytes()).decode("ascii")
-                    note = ("\n（本轮附有当前窗口截图；请结合图像回答，OCR 文字可能不完整。）"
-                            if screen_capture else "")
-                    last = dict(messages[-1], content=[
-                        {"type": "text", "text": messages[-1]["content"] + note},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{data}"}}])
-                    reply = self.client.complete(messages[:-1] + [last], max_tokens=900, model=self.vision_model)
-                except Exception as exc:                   # noqa: BLE001
-                    _log(f"看图失败，只读字：{type(exc).__name__}: {exc}")
-                    reply = None
-                    fallback = ("截图没能传过去（看图模型用不了），只能读下面这些字" if screen_capture
-                                else "图没能传过去（看图模型用不了），只能读下面这些字")
-                    messages = messages[:-1] + [dict(messages[-1], content=messages[-1]["content"].replace(
-                        IMAGE_NOTE, fallback) + ("\n" + fallback if screen_capture else ""))]
-            if reply is None:
-                reply = self.client.complete(messages, max_tokens=900 if longer else 500)
-            text, usage = reply if isinstance(reply, tuple) else (reply, {})
-            self._results.put((reason, parse_action(text), usage, None, brief, fold_upto, user_text))
+        look = None
+        p = self.perception
+        if (image is None and self.vision_model and self.screen_vision_mode in ("roi", "full")
+                and p is not None and hasattr(p, "capture_vision")):
+            w = getattr(p, "window", None)
+            if w is not None and not w.private:
+                mode, key = self.screen_vision_mode, (w.hwnd, w.title)
+                look = lambda: p.capture_vision(mode, key)       # noqa: E731
+        return ChatTools(p, self.chatlog, self.pearls, self.reminders, self.errands, self.memory, look)
+
+    def _run(self, reason: str, messages: list[dict], brief: str, fold_upto, image=None,
+             user_text: str | None = None, tools=None) -> None:
+        """工作线程：只做 HTTP 和只读工具，不碰仿真、记忆、上下文。"""
+        try:
+            text, usages = self._first_reply(reason, messages, fold_upto, image)
+            action = parse_action(text)
+            if tools is not None:
+                action, more = self._tool_rounds(reason, messages, text, action, tools)
+                usages += more
+            self._results.put((reason, action, usages, None, brief, fold_upto, user_text))
         except Exception as exc:                       # noqa: BLE001 —— 任何失败都不许炸主线程
             self._results.put((reason, None, None, f"{type(exc).__name__}: {exc}", brief, None, user_text))
         finally:
             self._busy = False
 
+    def _tool_rounds(self, reason: str, messages: list[dict], text: str, action: dict, tools) -> tuple[dict, list]:
+        """模型在回复里填了 need：本地取来结果，再问一次，最多 ``MAX_ROUNDS`` 轮。"""
+        from .chat_tools import MAX_ROUNDS, needs
+
+        usages: list = []
+        history = [_text_only(m) for m in messages]
+        for round_no in range(1, MAX_ROUNDS + 1):
+            items = needs(action)
+            if not items:
+                break
+            said = action.get("say")
+            if reason in DIRECT_REASONS and isinstance(said, str) and said.strip():
+                self._interim.put(said)              # 先开口（"等等，我看看"），查完再说结论
+            results, image = tools.run(items)
+            last = round_no == MAX_ROUNDS
+            follow = {"tool_results": results,
+                      "note": ("这是最后一次，给完整回复，不能再填 need。" if last
+                               else "查到的结果；需要的话还能再查一轮，查够了就给完整回复。")}
+            if said:
+                follow["you_already_said"] = said
+            history += [{"role": "assistant", "content": text},
+                        {"role": "user", "content": json.dumps(follow, ensure_ascii=False)}]
+            if image is not None:
+                import base64
+
+                data = base64.b64encode(image).decode("ascii")
+                ask = history[:-1] + [dict(history[-1], content=[
+                    {"type": "text", "text": history[-1]["content"]},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{data}"}}])]
+                try:
+                    reply = self.client.complete(ask, max_tokens=900, model=self.vision_model)
+                except Exception as exc:                   # noqa: BLE001
+                    _log(f"look_screen 看图失败，只读字：{type(exc).__name__}: {exc}")
+                    results["look_screen"] = "看图模型用不了，没看成。"
+                    history[-1] = {"role": "user", "content": json.dumps(dict(follow, tool_results=results),
+                                                                        ensure_ascii=False)}
+                    reply = self.client.complete(history, max_tokens=700)
+            else:
+                reply = self.client.complete(history, max_tokens=700)
+            text, usage = reply if isinstance(reply, tuple) else (reply, {})
+            usages.append(usage)
+            action = parse_action(text)
+            checked = action.setdefault("checked", [])    # 进对话历史：下一轮知道自己刚查过什么
+            if isinstance(checked, list):
+                checked += [k for k in results if k not in checked]
+        action.pop("need", None)
+        return action, usages
+
+    def _first_reply(self, reason: str, messages: list[dict], fold_upto, image) -> tuple[str, list]:
+        """第一次请求（可能带图）。``messages`` 会被就地改成实际发出去的样子（退回只读字时），
+        后面查工具的几轮接着它往下问。"""
+        longer = fold_upto is not None or reason == "pearl" or callable(image)
+        reply = None
+        screen_capture = callable(image) or isinstance(image, bytes)
+        if callable(image):
+            try:
+                image = image()
+            except Exception as exc:                   # noqa: BLE001
+                _log(f"当前窗口截图失败，只读字：{type(exc).__name__}: {exc}")
+                image = None
+            if image is None:
+                messages[-1] = dict(messages[-1], content=messages[-1]["content"]
+                                    + "\n（当前窗口截图未取得；只能依据本地文字回答。）")
+        if image is not None:
+            # 图只能放在 user 消息里：最后一条换成 [文字, 图]。看图模型不认 / 出错就退回只读字
+            import base64
+
+            try:
+                data = base64.b64encode(image if isinstance(image, bytes) else image.read_bytes()).decode("ascii")
+                note = ("\n（本轮附有当前窗口截图；请结合图像回答，OCR 文字可能不完整。）"
+                        if screen_capture else "")
+                last = dict(messages[-1], content=[
+                    {"type": "text", "text": messages[-1]["content"] + note},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{data}"}}])
+                reply = self.client.complete(messages[:-1] + [last], max_tokens=900, model=self.vision_model)
+            except Exception as exc:                   # noqa: BLE001
+                _log(f"看图失败，只读字：{type(exc).__name__}: {exc}")
+                reply = None
+                fallback = ("截图没能传过去（看图模型用不了），只能读下面这些字" if screen_capture
+                            else "图没能传过去（看图模型用不了），只能读下面这些字")
+                messages[-1] = dict(messages[-1], content=messages[-1]["content"].replace(
+                    IMAGE_NOTE, fallback) + ("\n" + fallback if screen_capture else ""))
+        if reply is None:
+            reply = self.client.complete(messages, max_tokens=900 if longer else 500)
+        text, usage = reply if isinstance(reply, tuple) else (reply, {})
+        return text, [usage]
+
     def _drain_results(self, sim) -> None:
+        while True:
+            try:
+                said = self._interim.get_nowait()
+            except queue.Empty:
+                break
+            self._say(sim, said, direct=True)          # 只有用户找它的那几种原因才会排进来
         while True:
             try:
                 reason, action, usage, error, brief, fold_upto, user_text = self._results.get_nowait()
@@ -950,11 +1044,13 @@ class Director:
                     if line:
                         sim.say(line)
                 continue
-            if self.usage is not None:
-                self.usage.record(usage, source="dialogue")
+            usages = usage if isinstance(usage, list) else [usage]      # 查了工具就是好几次请求
             stats = getattr(self.perception, "stats", None)
-            if stats is not None and usage:
-                stats["tokens"] += int(usage.get("total_tokens", 0) or 0)
+            for one in usages:
+                if self.usage is not None:
+                    self.usage.record(one, source="dialogue")
+                if stats is not None and one:
+                    stats["tokens"] += int(one.get("total_tokens", 0) or 0)
             self.last_error = None
             self.last_action = action
             self.context.add_turn(brief, json.dumps(action or {}, ensure_ascii=False))
