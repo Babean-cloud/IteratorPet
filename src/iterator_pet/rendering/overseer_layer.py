@@ -188,6 +188,17 @@ class OverseerLayer:
         self._step_reserve(snap["body"], head, inward, size)
         self._step_panel(state, body, head, inward, size, MAIN_COLORS.get(key, MAIN_COLORS["pebbles"]))
 
+    def regions(self) -> list[QRectF]:
+        """本窗口坐标里监视者和它的面板占的矩形（读屏幕时盖掉，别把自己的投影当成屏幕内容）。"""
+        if not self.sim.visible:
+            return []
+        out = [r for r in (self._rect, self.reserved_rect, self._ghost[1] if self._ghost else None) if r is not None]
+        g, z = self._graphics, self._zoom
+        if g is not None:
+            pad = 60.0 * z * SIZE
+            out.append(QRectF(g.head[0] * z - pad, g.head[1] * z - pad, 2 * pad, 2 * pad))
+        return out
+
     def _step_panel(self, state, body, head, inward, size, color) -> None:
         if self._ghost is not None:
             self._leaving += 1

@@ -401,6 +401,7 @@ class PetWindow(PetCanvas):
             self._projection_source.forget_approval()      # 中途又打开时，还在等的批准要重新投出来
             self.overseer.clear()
             self.overseer.step(state, self.scale, (self.width(), self.height()), quiet=True)
+            PetWindow._sync_own_ui(self, director, None)
             return
         self._projection_source.observe(
             mood=director.mood if director is not None else "",
@@ -429,6 +430,23 @@ class PetWindow(PetCanvas):
         cursor = state.cursor
         look = (cursor[0] * self.scale, cursor[1] * self.scale) if cursor is not None else None
         self.overseer.step(state, self.scale, (self.width(), self.height()), look=look, quiet=quiet)
+        PetWindow._sync_own_ui(self, director, current)   # 测试里 self 是假对象
+
+    def _sync_own_ui(self, director, current) -> None:
+        """告诉读屏幕：自家气泡 / 监视者 / 投影在哪、刚说了什么，截图时盖掉，认出来也丢掉。"""
+        perception = getattr(director, "perception", None) if director is not None else None
+        if perception is None or not hasattr(self, "own_regions"):
+            return
+        perception.set_own_regions(self.own_regions())
+        said = self.simulation.dialogue.text
+        if said and said != getattr(self, "_noted_say", None):
+            self._noted_say = said
+            perception.note_own_text(said)
+        if current is not None and current.serial != getattr(self, "_noted_projection", None):
+            self._noted_projection = current.serial
+            for line in current.lines:
+                perception.note_own_text(getattr(line, "text", ""))
+            perception.note_own_text(current.scroll_text or "")
 
     def _local_cursor(self) -> tuple[float, float]:
         """光标在本窗口里的位置（屏幕像素）：投影的按钮 / 悬停都按这个算。"""

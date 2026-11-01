@@ -60,6 +60,7 @@ class PetCanvas(QWidget):
         self._low: QImage | None = None
         self._compositor = Compositor()
         self.overseer = OverseerLayer()
+        self.bubble_rect = None               # 上一帧画出的气泡（本窗口坐标），读屏幕时盖掉
         # 命中测试要用的"屏幕上真正画出去的那一份"（帧缓存/alpha 会让重新插值的
         # 结果和屏幕上差一个 tick，拿它去命中会点不准）
         self._drawn_state = None
@@ -128,6 +129,19 @@ class PetCanvas(QWidget):
             self._low = low
         return low
 
+    def own_regions(self) -> list[tuple[int, int, int, int]]:
+        """气泡、监视者和投影面板在屏幕上的物理像素矩形 (左, 上, 右, 下)，给读屏幕盖白用。"""
+        from PySide6.QtCore import QPoint
+
+        rects = [self.bubble_rect] if self.bubble_rect is not None else []
+        rects += self.overseer.regions()
+        if not rects:
+            return []
+        origin, dpr = self.mapToGlobal(QPoint(0, 0)), self.devicePixelRatioF()
+        return [(int((origin.x() + r.left()) * dpr), int((origin.y() + r.top()) * dpr),
+                 int((origin.x() + r.right()) * dpr) + 1, int((origin.y() + r.bottom()) * dpr) + 1)
+                for r in rects]
+
     def _paint_dialogue(self, painter: QPainter) -> None:
         """画当前这句台词（屏幕像素，锚点从仿真 px 转换一次）。"""
         if not self.dialogue_enabled:
@@ -137,8 +151,9 @@ class PetCanvas(QWidget):
             return
         data = view()
         if not data:
+            self.bubble_rect = None
             return
-        draw_bubble_world(
+        self.bubble_rect = draw_bubble_world(
             painter,
             text=data["text"],
             size_fac=data["size_fac"],

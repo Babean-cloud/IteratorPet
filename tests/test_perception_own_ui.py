@@ -55,6 +55,30 @@ def test_capture_is_discarded_if_panel_moves_during_grab(monkeypatch):
     assert eyes._last_ocr_at < 0
 
 
+def test_moving_own_regions_are_blanked_with_padding_and_not_discarded(monkeypatch):
+    image = Image.new("RGB", (400, 300), "black")
+    eyes = perception.Perception(clock=lambda: 100.0)
+    eyes.set_own_regions([(100, 100, 150, 130)])
+
+    def grab(**_kw):
+        eyes.set_own_regions([(300, 200, 340, 220)])          # 截图那一瞬监视者挪了位置
+        return image.copy()
+
+    monkeypatch.setattr(ImageGrab, "grab", grab)
+    out = eyes._grab_masked((0, 0, 400, 300), eyes._overlay_version)
+    assert out is not None                                     # 每帧都动的东西不让截图作废
+    assert out.getpixel((95, 95)) == (255, 255, 255)           # 前后两处都盖白，且往外多盖一圈
+    assert out.getpixel((320, 210)) == (255, 255, 255)
+    assert out.getpixel((10, 10)) == (0, 0, 0)
+
+
+def test_lines_matching_what_the_pet_just_said_are_dropped():
+    eyes = perception.Perception(clock=lambda: 100.0)
+    eyes.note_own_text("……别盯着我看。去写你的代码。")
+    lines = ["别盯着我看。去写你的代", "def parse(row):", "测试 3 个通过"]
+    assert eyes._drop_own(lines) == ["def parse(row):", "测试 3 个通过"]
+
+
 def test_ai_panel_sends_its_geometry_to_perception():
     masks = []
     panel = SimpleNamespace(

@@ -21,6 +21,7 @@ import sys
 import tempfile
 import threading
 import time
+from collections import deque
 from ctypes import wintypes
 from dataclasses import dataclass
 from pathlib import Path
@@ -37,6 +38,7 @@ OCR_SETTLE_SECONDS = 3.0       # 换窗口后停留多久才截图（切来切�
 PROBE_SECONDS = 1.8           # 感知 tick 约 2 s；留余量避免错过一次 tick
 OCR_MIN_GAP = 20.0             # 任意两次 OCR 至少隔多久（浏览器来回切标签页时不狂截）
 READ_MIN_SHOWN = 1.2           # 读屏幕的扫描圈至少亮多久
+OWN_PAD = 12                   # 盖自家气泡 / 监视者时往外多盖几像素（发光、错位都在框外一点）
 FOUND_SHOWN = 1.0              # 认出新内容后"亮一下"持续多久
 READ_FADE = 0.8               # 认完后淡出多久
 SCREEN_NEW_MAX_CHARS = 400    # 只发新增行时的上限
@@ -286,6 +288,8 @@ class Perception:
         self._window_read_pending = False
         self._own_window_active = False
         self._own_overlay: tuple[int, int, int, int] | None = None
+        self._own_regions: tuple = ()
+        self._own_phrases: deque[str] = deque(maxlen=12)
         self._overlay_version = 0
         # OCR 结果：(hwnd, title) -> (时间, 文本)。只在工作线程写一个新 dict，主线程读引用。
         self._ocr: dict[tuple[int, str], tuple[float, str]] = {}
@@ -334,6 +338,32 @@ class Perception:
             self._own_overlay = rect
             self._overlay_version += 1
 
+    def set_own_regions(self, rects) -> None:
+        """气泡、监视者、投影面板这类每帧都在动的自家画面（物理像素矩形）。不算版本号：
+        截图前后各取一次，两次的矩形都盖白（截图那一瞬它们挪了也盖得住）。"""
+        self._own_regions = tuple(tuple(int(v) for v in r) for r in rects or ())
+
+    def note_own_text(self, text: str) -> None:
+        """桌宠自己刚说过 / 投影过的话：认出来的行和它太像就丢掉（盖白漏掉时的兜底）。"""
+        text = re.sub(r"\s+", "", text or "")
+        if len(text) >= 4:
+            self._own_phrases.append(text)
+
+    def _drop_own(self, lines: list[str]) -> list[str]:
+        if not self._own_phrases:
+            return lines
+        from difflib import SequenceMatcher
+
+        kept = []
+        for line in lines:
+            flat = re.sub(r"\s+", "", line)
+            own = len(flat) >= 4 and any(
+                flat in phrase or SequenceMatcher(None, flat, phrase).find_longest_match().size >= max(4, 0.8 * len(flat))
+                for phrase in self._own_phrases)
+            if not own:
+                kept.append(line)
+        return kept
+
     def has_ready_window_event(self) -> bool:
         return self.popup_watcher.foreground_ready()
 
@@ -352,16 +382,21 @@ class Perception:
     def _grab_masked(self, rect, overlay_version):
         from PIL import ImageDraw, ImageGrab
 
+        before = self._own_regions
         image = ImageGrab.grab(bbox=rect, all_screens=True)
         if self._overlay_version != overlay_version:
             return None
-        overlay = self._own_overlay
-        if overlay is not None:
-            left, top, right, bottom = rect
-            x0, y0 = max(left, overlay[0]) - left, max(top, overlay[1]) - top
-            x1, y1 = min(right, overlay[2]) - left, min(bottom, overlay[3]) - top
+        masks = [*before, *self._own_regions]
+        if self._own_overlay is not None:
+            masks.append(self._own_overlay)
+        left, top, right, bottom = rect
+        draw = ImageDraw.Draw(image)
+        for mask in masks:
+            pad = 0 if mask is self._own_overlay else OWN_PAD
+            x0, y0 = max(left, mask[0] - pad) - left, max(top, mask[1] - pad) - top
+            x1, y1 = min(right, mask[2] + pad) - left, min(bottom, mask[3] + pad) - top
             if x1 > x0 and y1 > y0:
-                ImageDraw.Draw(image).rectangle((x0, y0, x1 - 1, y1 - 1), fill="white")
+                draw.rectangle((x0, y0, x1 - 1, y1 - 1), fill="white")
         return image
 
     def capture_vision(self, mode: str, key: tuple[int, str],
@@ -669,7 +704,7 @@ class Perception:
                 began = time.perf_counter()
                 did_ocr[0] = True
                 try:
-                    return clean_ocr(ocr_lines(crop))
+                    return clean_ocr(self._drop_own(ocr_lines(crop)))
                 finally:
                     self.stats["ocr_s"] += time.perf_counter() - began
                     self.stats["ocr_n"] += 1
