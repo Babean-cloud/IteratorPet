@@ -37,6 +37,8 @@ class SoundBoard:
         self.sounds: dict[str, list[dict]] = {}
         self.effects: dict[str, list] = {}       # 名字 → [(QSoundEffect, 游戏音量)]
         self.loops: dict[str, tuple] = {}         # 名字 → (QSoundEffect, 游戏音量)
+        self.mixer = None                         # 真的载入了才有（mixer.py）
+        self.output = None
         self._levels = {key: 0.0 for key in LOOP_KEYS}
         self._pending: dict | None = None
         self._loading = False
@@ -87,20 +89,18 @@ class SoundBoard:
         threading.Thread(target=work, daemon=True).start()
 
     def _load(self, sounds: dict) -> None:
-        from PySide6.QtCore import QUrl
-        from PySide6.QtMultimedia import QSoundEffect
-
+        # 所有音效混成一条流（mixer.py）：每个音效各开一条 QSoundEffect 流，跑一阵会全部哑掉
         from ..assets_extractor import sound_dir
+        from .mixer import Clip, Mixer, Output
 
         folder = sound_dir(self.cache_dir)
         self.sounds = sounds
+        self.mixer = Mixer()
+        self.output = Output(self.mixer)
         for key, clips in sounds.items():
             loaded = []
             for clip in clips:
-                effect = QSoundEffect()
-                effect.setSource(QUrl.fromLocalFile(str(folder / clip["file"])))
-                if key in LOOP_KEYS:
-                    effect.setLoopCount(QSoundEffect.Loop.Infinite.value)
+                effect = Clip(self.mixer, folder / clip["file"], loop=key in LOOP_KEYS)
                 loaded.append((effect, float(clip.get("vol", 1.0))))
             if not loaded:
                 continue
@@ -129,6 +129,7 @@ class SoundBoard:
                 "qt": qVersion(), "enabled": self.enabled, "muted": self.muted,
                 "volume": self.volume, "speech": getattr(self.config, "sound_speech", True),
                 "actions": getattr(self.config, "sound_actions", True), "error": self.error,
+                "output": self.output.describe() if self.output is not None else None,
                 "effects": rows}
         folder = config_dir() / "audio_diagnostics"
         folder.mkdir(parents=True, exist_ok=True)
