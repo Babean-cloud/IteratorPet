@@ -521,6 +521,10 @@ class HabitStore:
             chats = [f"{t['id']}：{t['when']}" for t in habit.triggers("chat")]
             if chats:
                 line += "｜chat 触发 " + "；".join(chats)
+            timed = [f"{t['id']}：{t['days']} {t['at']}{'（便宜时段）' if t.get('window') else ''}{'，后台任务' if t['run'] == 'task' else ''}"
+                     for t in habit.triggers("time")]
+            if timed:
+                line += "｜定时 " + "；".join(timed)
             lines.append(line)
         self._cat_sig = sig
         self._cat_text = "【习惯目录】（名字｜标题｜说明）\n" + "\n".join(lines) if lines else ""

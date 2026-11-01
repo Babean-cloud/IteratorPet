@@ -70,7 +70,7 @@ def test_catalogue_lists_enabled_habits_and_caches(tmp_path):
     store, *_ = make(tmp_path)
     text = store.catalogue()
     assert text.startswith("【习惯目录】") and "idea-review｜想法回顾｜" in text
-    assert "chat 触发 capture：用户随口说出想法" in text and "review" not in text.split("chat 触发")[1]
+    assert "chat 触发 capture：用户随口说出想法" in text and "定时 review：daily 22:30" in text
     assert store.catalogue() is text, "文件没动就不重读"
     store.set_enabled("idea-review", False)
     assert store.catalogue() == ""

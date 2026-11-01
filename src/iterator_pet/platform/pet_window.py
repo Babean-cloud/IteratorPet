@@ -176,7 +176,7 @@ class PetWindow(PetCanvas):
         self.errands = Errands()                 # 心事：和提醒一样两个角色共用
         from ..brain.habits.store import HabitState, HabitStore, workspace_path
 
-        # 习惯（brain/habits/）：数据在工作区（默认 %USERPROFILE%\\IteratorWS），运行状态在 %LOCALAPPDATA%；两个角色共用。
+        # 习惯（brain/habits/）：数据在工作区（默认 %USERPROFILE%\IteratorWS），运行状态在 %LOCALAPPDATA%；两个角色共用。
         # 第一次真用到才建文件夹，所以这里建对象不碰磁盘
         self.habits = HabitStore(workspace_path(config), day_cap=int(getattr(config, "llm_daily_token_cap", 0) or 0))
         self.habit_state = HabitState()

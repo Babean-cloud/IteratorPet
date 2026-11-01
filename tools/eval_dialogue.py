@@ -36,6 +36,31 @@ RUNS = HERE / "eval_runs"
 BOUNDS = (0.0, 0.0, 1138.0, 608.0)
 
 
+_SKILL = """---
+name: idea-review
+description: 用户随口说出自己感兴趣的话题或想法时记下来；每晚把当天的想法回顾给用户。
+metadata:
+  iteratorpet-title: 想法回顾
+---
+## 记下想法
+用户随口说出感兴趣的话题或想法时，追加到 notes/ideas.md。
+
+## 睡前回顾
+22:30 左右用一两句话告诉用户今天记了几条想法。
+"""
+_V1 = {"schema": 1, "triggers": [
+    {"id": "capture", "type": "chat", "when": "用户随口说出自己感兴趣的话题或想法", "run": "inline"},
+    {"id": "review", "type": "time", "at": "22:30", "days": "daily", "run": "inline"}]}
+_V2 = {"schema": 1, "permissions": {"web": True, "write": "notes"}, "triggers": _V1["triggers"] + [
+    {"id": "digest", "type": "time", "at": "14:00", "days": "daily", "run": "task"}]}
+# 习惯夹具（场景里 "habits": ["idea-review-v1"]）：名字、SKILL.md、habit.json、当时的原话
+HABIT_FIXTURES = {
+    "idea-review-v1": ("idea-review", _SKILL, _V1, "我是不是会蹦几句自己感兴趣的话题和想法，你帮我记下来，每天给我回顾一下"),
+    "idea-review-v2": ("idea-review", _SKILL + "\n## 备资料\n对当天新记的想法上网搜资料，摘要写进 notes/digest-<日期>.md。\n", _V2,
+                       "上次说的提几句想法那件事，收到关键词后你要自己上网准备一下资料供我回顾，每天晚上睡前提醒我看"),
+}
+
+
 class Eyes:
     """假感知：只给 observe() 用到的几样。"""
 
@@ -111,9 +136,17 @@ def run_one(sc: dict, client, tmp: Path) -> dict:
         chatlog.add("user" if i % 2 == 0 else "pet", f"（合成对话第{i}句）" + "闲聊内容" * 3)
         now["t"] += 30.0
     relay = Relay(client)
+    habits = None
+    if sc.get("habits"):
+        from iterator_pet.brain.habits.store import HabitStore
+
+        habits = HabitStore(tmp / "ws", git=lambda: None)
+        for key in sc["habits"]:
+            name, skill, config, said = HABIT_FIXTURES[key]
+            habits.write(name, skill, config, said, kind="create")
     director = Director(relay, clock=lambda: now["t"], idle_fn=lambda: float(sc.get("idle_s", 5)),
                         wall=lambda: datetime(2026, 11, 1, hour, minute),
-                        memory=memory, chatlog=chatlog, perception=Eyes(sc.get("screen")))
+                        memory=memory, chatlog=chatlog, perception=Eyes(sc.get("screen")), habits=habits)
     context = director.context
     for i in range(int(filler.get("turns", 0))):           # 最近 N 轮原始请求/回复
         context.add_turn(json.dumps({"event": "屏幕有变化", "time": "15:%02d" % (i * 5 % 60), "relation": "认得"},
@@ -187,7 +220,7 @@ def main() -> None:
                 if res["interim"]:
                     print(f"   先说: {res['interim']}")
                 for key in ("say", "thought", "mood", "plan", "remember", "learn", "remind", "errand", "task",
-                            "checked", "error"):
+                            "checked", "habit_use", "habit_edit", "habit_suggest", "error"):
                     if reply.get(key) not in (None, "", []):
                         print(f"   {key}: {json.dumps(reply[key], ensure_ascii=False)[:200]}")
                 print(f"   期望: {res['expect']}")
