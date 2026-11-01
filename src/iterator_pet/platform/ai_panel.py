@@ -196,7 +196,7 @@ class AIPanel(FramedWindow):
         # 分节默认只展开"此刻"，其余折叠，点标题行展开；条数 / 摘要写在标题右边
         self.now = _Rows()                         # 此刻：一眼要看的
         for name, key in (("state", "状态"), ("mood", "心情"), ("thought", "它在想"),
-                          ("sees", "它看到"), ("error", "错误")):
+                          ("sees", "它看到"), ("said", "上一句"), ("error", "错误")):
             self.now.add(name, key)
         page.addWidget(_group("此刻", self.now, open_=True))
 
@@ -328,7 +328,7 @@ class AIPanel(FramedWindow):
         director = win.director
         if director is None:
             rows.show_text("state", "AI 驱动没开")
-            for name in ("mood", "thought", "sees", "error"):
+            for name in ("mood", "thought", "sees", "said", "error"):
                 rows.show_text(name, None)
             for name in ("relation", "energy", "talk", "plan", "reminders"):
                 rel.show_text(name, None)
@@ -375,6 +375,14 @@ class AIPanel(FramedWindow):
             ps = st.get("perception_stats")
             self.eyes.show_text("stats", (f"OCR {ps['ocr_n']} 次 / {ps['ocr_s']:.0f}s · observe {ps['observe_n']} 次 · "
                                           f"屏幕字 {ps['screen_chars']}（每小时清零）") if ps else None)
+            said = st.get("last_said")
+            rows.show_text("said", None if not said else
+                           f"{said['time']}「{said['text']}」
+因为：{said['why']}"
+                           + (f"
+当时在想：{said['thought']}" if said.get("thought") else "")
+                           + (f"
+当时在看：{said['window']}" if said.get("window") else ""))
             rows.show_text("error", st["last_error"][:160] if st["last_error"] else
                            (st["ocr_error"][:160] if st["ocr_error"] else None))
 

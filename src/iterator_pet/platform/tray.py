@@ -155,6 +155,13 @@ def add_ai_actions(menu: QMenu, window) -> None:
     action_quiet.triggered.connect(lambda checked: window.set_quiet_today(bool(checked)))
     menu.addAction(action_quiet)
 
+    said = getattr(getattr(window, "director", None), "last_said", None)
+    if said:
+        # 「它为什么开口」：上一句的原因一眼可见，点开 AI 状态看详细（当时在想什么、在看什么）
+        action_why = QAction(f"上一句（{said['time']}）为什么说：{said['why'][:24]}", menu)
+        action_why.triggered.connect(window.show_ai_panel)
+        menu.addAction(action_why)
+
     action_panel = QAction("AI 状态…", menu)
     action_panel.triggered.connect(window.show_ai_panel)
     menu.addAction(action_panel)

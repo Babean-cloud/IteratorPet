@@ -40,3 +40,17 @@ def test_autonomous_error_said_once_then_quiet_but_chat_always_answered():
     director._results.put(("idle", None, None, "HTTP 401: bad", "b", None, None))
     director._drain_results(sim)
     assert sim.dialogue.text == ERROR_LINES["auth"]
+
+
+def test_last_said_records_why_and_thought():
+    from datetime import datetime
+
+    director = Director(NoClient(), clock=lambda: 10_000.0, idle_fn=lambda: 0.0,
+                        wall=lambda: datetime(2026, 11, 2, 21, 5))
+    sim = SimulationState((0.0, 0.0, 800.0, 600.0), warmup=0)
+    sim.pool_lines = False
+    director.apply(sim, {"say": "……又在改那个报错。", "thought": "第 42 行还没改"}, "screen")
+    said = director.last_said
+    assert said["text"] == "……又在改那个报错。" and said["why"] == "屏幕上认出了新内容"
+    assert said["thought"] == "第 42 行还没改" and said["time"] == "21:05"
+    assert director.status()["last_said"] is said

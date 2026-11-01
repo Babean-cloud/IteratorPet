@@ -132,6 +132,17 @@ ERROR_LINES = {
 ERROR_REPEAT = 2 * 3600.0     # 同一类错误多久才再提一次（用户在等回复时不受限）
 
 
+# 「它为什么开口」给用户看的原因（不是给模型的 EVENT_TEXT）
+WHY_LABELS = {
+    "chat": "你跟它说话", "drag": "被你拖了", "talk": "光标在它旁边停了很久", "angry": "被拖急了",
+    "window": "你换了窗口", "back": "你刚回到电脑前", "long_session": "你在同一个程序里待了很久",
+    "late": "已经很晚了", "plan_done": "没什么事，自己想说", "idle": "没什么事，自己想说",
+    "screen": "屏幕上认出了新内容", "agent": "编程 agent 发来通知", "relation_up": "你们的关系近了一步",
+    "battery": "电脑快没电了", "task_done": "替你做的任务结束了", "pearl": "在读你递的珍珠",
+    "arrive": "刚被切出来", "reflect": "反思",
+}
+
+
 def say_gap(talkativeness: float) -> float:
     """自主说话的最小间隔（秒）：话量 0 → 170 s，0.5 → 100 s，1 → 30 s。
 
@@ -235,6 +246,8 @@ class Director:
         self._long_marked: float | None = None
         self._agent_pending: dict | None = None   # 编程 agent 发来、还没说出口的通知
         self.last_error: str | None = None
+        self.last_said: dict | None = None          # 上一句说出口的话和原因（右键菜单 / AI 状态里看）
+        self._plan_why: tuple[str, str] | None = None
         self._error_said: dict[str, float] = {}     # 每类错误上次说出口的时刻
         self.last_action: dict | None = None
         self.requests = 0
@@ -363,7 +376,8 @@ class Director:
         self.context.since_reflect += 1
 
     # -- 说话闸门 -----------------------------------------------------------
-    def _say(self, sim, text, direct: bool) -> bool:
+    def _say(self, sim, text, direct: bool, why: str | None = None, thought: str | None = None) -> bool:
+        """``why`` / ``thought``：说出口后记进 ``last_said``，给用户看"它为什么这么说"。"""
         if not isinstance(text, str) or not text.strip():
             return False
         now = self.clock()
@@ -380,6 +394,10 @@ class Director:
         if sim.say(text):
             if self.usage is not None and hasattr(self.usage, "note_say"):
                 self.usage.note_say()
+            window = self.perception.describe() if self.perception is not None else None
+            self.last_said = {"text": text, "why": why or "没记下原因", "time": self.wall().strftime("%H:%M"),
+                              "thought": thought if thought is not None else self.thought,
+                              "window": f"{window['app']}：{window['title']}" if window else None}
             if not direct:
                 self._last_auto_say = now
                 window = self.perception.describe() if self.perception is not None else None
@@ -402,7 +420,9 @@ class Director:
             self.log(f"（没说出口，已经不合时宜：{str(text)[:30]}）")
             return
         # 日程里"等光标靠近再说"的那句，是对用户的回应，不算自言自语
-        self._say(sim, text, direct=sim.cursor is not None and self.planner.waiting_for_cursor)
+        why, thought = self._plan_why or ("之前排的安排", None)
+        self._say(sim, text, direct=sim.cursor is not None and self.planner.waiting_for_cursor,
+                  why=f"按之前排的安排（当时：{why}）", thought=thought)
 
     # -- 每 tick（主线程） --------------------------------------------------
     def tick(self, sim) -> None:
@@ -415,7 +435,7 @@ class Director:
         if notice is not None and now - notice[1] > TASK_NOTICE_WAIT:
             # 任务结束了，模型那边迟迟没开口（打盹 / 请求失败 / 被别的事挤掉）：本地说一句，别让人干等
             self._task_notice = None
-            self._say(sim, notice[0], direct=True)
+            self._say(sim, notice[0], direct=True, why="替你做的任务结束了")
 
         for event in sim.pending_events:
             if event in ("drag", "angry"):
@@ -495,7 +515,7 @@ class Director:
         orbit = getattr(sim, "pearls", None)
         if self._reading:
             if not sim.dialogue.text and now >= self._next_line:
-                self._say(sim, self._reading.pop(0), direct=True)
+                self._say(sim, self._reading.pop(0), direct=True, why="在读你递的珍珠")
                 self._next_line = now + 1.0
                 if not self._reading:
                     self._reading_done_at = now
@@ -653,7 +673,7 @@ class Director:
                 if self.chatlog is not None:
                     self.chatlog.add("system", f"心事「{goal}」{'办完了' if done else '放弃了'}（{why}）")
                 self.planner.load([{"do": "go", "to": "cursor"}], sim)
-                self._say(sim, say, direct=True)
+                self._say(sim, say, direct=True, why=f"心事「{goal[:20]}」有了结果" if action in ("done", "give_up") else f"在盯心事「{goal[:20]}」")
                 continue
             self.errands.plan(errand_id, decision.get("notes") or "", decision.get("triggers") or [],
                               decision.get("check_in_min"), decision.get("deadline_min"))
@@ -664,7 +684,7 @@ class Director:
                 how = "、".join(describe for describe in self.errands.describe() if goal in describe)
                 self.chatlog.add("system", how or f"在盯着：{goal}")
             if say:
-                self._say(sim, say, direct=True)
+                self._say(sim, say, direct=True, why=f"心事「{goal[:20]}」有了结果" if action in ("done", "give_up") else f"在盯心事「{goal[:20]}」")
 
     def _fire_reminders(self, sim) -> None:
         if self.reminders is None:
@@ -673,7 +693,7 @@ class Director:
             self.log(f"提醒到点：{text}")
             # 飘到光标旁边再说；提醒不受话量/勿扰限制（是用户自己定的）
             self.planner.load([{"do": "go", "to": "cursor"}], sim)
-            self._say(sim, text, direct=True)
+            self._say(sim, text, direct=True, why="你设的提醒到点了")
 
     def _tick_relation(self, now: float) -> None:
         from .relation import step_energy
@@ -1070,7 +1090,7 @@ class Director:
                 said = self._interim.get_nowait()
             except queue.Empty:
                 break
-            self._say(sim, said, direct=True)          # 只有用户找它的那几种原因才会排进来
+            self._say(sim, said, direct=True, why="你跟它说话（先应一声，查完再答）")
         while True:
             try:
                 reason, action, usage, error, brief, fold_upto, user_text = self._results.get_nowait()
@@ -1083,7 +1103,7 @@ class Director:
                 self._next_allowed = self.clock() + ERROR_BACKOFF
                 notice = self._error_notice(error, waiting=reason == "chat")
                 if notice:
-                    self._say(sim, notice, direct=True)       # 用户在等回复 / 第一次出这类错：明说，别静默退回台词池
+                    self._say(sim, notice, direct=True, why=f"请求出错：{error[:60]}")  # 用户在等回复 / 第一次出这类错：明说
                     continue
                 if reason == "pearl":
                     self._pearl_in_flight = None
@@ -1126,7 +1146,9 @@ class Director:
             if not (isinstance(said, str) and said.strip()):
                 said = self._task_notice[0]          # 任务结束这一轮必须有一句，模型不说就用保底的
             self._task_notice = None
-        self._say(sim, said, direct=reason in DIRECT_REASONS)
+        why = WHY_LABELS.get(reason, reason)
+        thought_now = action.get("thought") if isinstance(action.get("thought"), str) else None
+        self._say(sim, said, direct=reason in DIRECT_REASONS, why=why, thought=thought_now)
         mood = action.get("mood")
         if isinstance(mood, str) and mood.strip():
             self.mood = mood.strip()[:12]
@@ -1138,6 +1160,7 @@ class Director:
         if isinstance(plan, list):
             self.planner.load(plan, sim)
             self._plan_made = (self.clock(), self._current_window())
+            self._plan_why = (why, thought_now)
 
         if self.reminders is not None:
             remind = action.get("remind")
@@ -1215,6 +1238,7 @@ class Director:
             "salience": round(self.salience, 2),
             "away": self.away,
             "quiet": self.quiet,
+            "last_said": self.last_said,
             "muted_until": self.mute_until if self.muted_today else None,
             "over_budget": self.over_budget,
             "reminders": (self.reminders.describe() if self.reminders is not None else [])
