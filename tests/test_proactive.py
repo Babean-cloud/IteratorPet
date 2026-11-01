@@ -18,7 +18,7 @@ WIDE = (0.0, 0.0, 1138.0, 608.0)
 
 
 def test_say_gap_is_shorter_than_before():
-    assert say_gap(0.5) == 70.0 and say_gap(1.0) == 20.0 and say_gap(0.0) == 120.0
+    assert say_gap(0.5) == 100.0 and say_gap(1.0) == 30.0 and say_gap(0.0) == 170.0
 
 
 def test_remarks_learn_from_reactions(tmp_path):

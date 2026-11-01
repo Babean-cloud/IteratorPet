@@ -159,15 +159,20 @@ class Bridge:
                     return self._reply(200, {"ok": True, "name": "iterator-pet"})
                 return self._reply(405 if self.path == "/mcp" else 404, {"error": "not found"})
 
+            def _reject(self, code: int, error: str, length: int):
+                # 读完请求体再拒：Windows 上关掉还有没读数据的连接会发 RST，客户端偶尔先收到
+                # "连接被重置"而不是我们的回复（全量并行测试时偶发）
+                if 0 < length <= 16 * MAX_BODY:
+                    self.rfile.read(length)
+                self.close_connection = True
+                return self._reply(code, {"error": error})
+
             def do_POST(self):  # noqa: N802
-                if not self._authorized():
-                    return self._reply(401, {"error": "unauthorized"})
                 length = int(self.headers.get("Content-Length") or 0)
+                if not self._authorized():
+                    return self._reject(401, "unauthorized", length)
                 if length > MAX_BODY:
-                    if length <= 16 * MAX_BODY:
-                        self.rfile.read(length)      # 读完再拒，不然客户端那头是"连接被中止"
-                    self.close_connection = True
-                    return self._reply(413, {"error": "too large"})
+                    return self._reject(413, "too large", length)
                 raw = self.rfile.read(length) if length else b"{}"
                 try:
                     payload = json.loads(raw.decode("utf-8-sig") or "{}")
