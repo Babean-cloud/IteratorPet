@@ -139,7 +139,19 @@ WHY_LABELS = {
     "late": "已经很晚了", "plan_done": "没什么事，自己想说", "idle": "没什么事，自己想说",
     "screen": "屏幕上认出了新内容", "agent": "编程 agent 发来通知", "relation_up": "你们的关系近了一步",
     "battery": "电脑快没电了", "task_done": "替你做的任务结束了", "pearl": "在读你递的珍珠",
-    "arrive": "刚被切出来", "reflect": "反思",
+    "arrive": "刚被切出来", "reflect": "反思", "habit": "你养成的习惯到点了",
+}
+
+
+HABIT_OPS = {"pause": "暂停了", "resume": "恢复了", "revert": "撤回到上一版", "delete": "删掉了（放进了回收站）"}
+# 习惯有变动时的话（≤40 字，SAY_MAX_CHARS）；完整的说明另写进对话记录
+HABIT_LINES = {
+    "pebbles": {"done": "……{verb}：{what}。不对就说“改回去”。", "busy": "……上一件还在写，等着。",
+                "unknown": "……我不记得有这个习惯。说清楚点。", "failed": "……没弄成。详情在对话窗口里。",
+                "pause": "……停了。", "resume": "……接着干。", "revert": "……改回去了。", "delete": "……扔了，还在回收站里。"},
+    "past_moon": {"done": "{verb}：{what}。不合意就说“改回去”。", "busy": "上一件还在写，请稍等。",
+                  "unknown": "我不记得有这样的习惯，能说得再清楚些吗？", "failed": "没能写成，原因在对话窗口里。",
+                  "pause": "先停下了。", "resume": "又开始了。", "revert": "已经改回去了。", "delete": "收起来了，回收站里还留着。"},
 }
 
 
@@ -159,7 +171,8 @@ class Director:
                  daily_token_cap: int = 10_000_000, on_territory=None, idle_fn=None,
                  wall=datetime.now, talkativeness: float = 0.5, chatlog=None, context=None,
                  pearls=None, errands=None, watcher=None, sensors=None,
-                 on_task_request=None, task_workspace: str | None = None):
+                 on_task_request=None, task_workspace: str | None = None,
+                 habits=None, habit_state=None):
         from . import perception as P
 
         self._new_stats = P.new_stats
@@ -185,6 +198,12 @@ class Director:
         self._errand_busy = False
         self._errand_queue: list[tuple[str, str]] = []
         self._errand_results: queue.Queue = queue.Queue()
+        # 习惯系统（habits/）：HabitStore 读写工作区里的习惯；HabitState 是运行状态（预算、失败次数）
+        self.habits = habits
+        self.habit_state = habit_state
+        self._habit_busy = False                   # HabitAuthor 正在写（一次只写一件）
+        self._habit_results: queue.Queue = queue.Queue()
+        self._habit_question: dict | None = None   # 作者反问过的：用户下一句的回答要和原话并在一起再写
         self.pearls = pearls                       # PearlStore（可以没有）
         self._pending_pearls: list[str] = []
         self._pearl_in_flight: str | None = None
@@ -431,6 +450,7 @@ class Director:
         self._last_tick = now
         self._drain_results(sim)
         self._drain_errands(sim)
+        self._drain_habits(sim)
         notice = self._task_notice
         if notice is not None and now - notice[1] > TASK_NOTICE_WAIT:
             # 任务结束了，模型那边迟迟没开口（打盹 / 请求失败 / 被别的事挤掉）：本地说一句，别让人干等
@@ -1184,6 +1204,8 @@ class Director:
                 self.on_task_request({"goal": goal.strip()[:400], "mode": mode,
                                       "workspace": workspace}, user_text)
 
+        self._apply_habits(sim, action, reason, user_text)
+
         memory = self.memory
         if memory is None:
             return
@@ -1212,6 +1234,145 @@ class Director:
             changed |= memory.rewrite_profile(action.get("profile_rewrite"))
         if changed:
             memory.save()
+
+    # -- 习惯（设计稿 §6） ----------------------------------------------------
+    def _apply_habits(self, sim, action: dict, reason: str, user_text: str | None) -> None:
+        if self.habits is None:
+            return
+        edit = action.get("habit_edit")
+        if edit is not None:
+            # 只认用户亲口说话的那一轮（H8、H9）：屏幕 / 网页 / 通知引出的回复里就算有，也丢掉
+            if reason == "chat" and user_text and isinstance(edit, dict):
+                self._habit_edit(sim, edit, user_text)
+            else:
+                _log(f"丢弃 habit_edit（reason={reason}，不是用户亲口要求的）：{str(edit)[:80]}")
+        suggest = action.get("habit_suggest")
+        if reason == "task_done" and isinstance(suggest, str) and suggest.strip():
+            self._say(sim, suggest.strip(), direct=True, why="觉得这件事会反复出现")
+
+    def _habit_lookup(self, name: str):
+        """按名字或标题找习惯；没写名字而只有一个习惯时就是它。"""
+        habits = self.habits.list()
+        name = (name or "").strip()
+        for habit in habits:
+            if name and name in (habit.name, habit.title):
+                return habit
+        return habits[0] if not name and len(habits) == 1 else None
+
+    def _habit_edit(self, sim, edit: dict, user_text: str) -> None:
+        from .habits.store import HabitError
+
+        op = edit.get("op")
+        name = str(edit.get("name") or "").strip()
+        key = sim.appearance.key
+        if op in ("create", "update"):
+            if self._habit_busy:
+                self._say(sim, HABIT_LINES[key]["busy"], direct=True, why="习惯还在写")
+                return
+            existing = None
+            if op == "update":
+                habit = self._habit_lookup(name)
+                if habit is None:
+                    self._say(sim, HABIT_LINES[key]["unknown"], direct=True, why="没找到要改的习惯")
+                    return
+                try:
+                    habit = self.habits.get(habit.name)         # get() 会先把手改过的内容记一次快照
+                except HabitError as exc:
+                    self._say(sim, HABIT_LINES[key]["failed"], direct=True, why=f"习惯读不了：{exc}")
+                    return
+                existing = {"name": habit.name, "skill_md": (habit.path / "SKILL.md").read_text(encoding="utf-8"),
+                            "habit_json": habit.config, "requests": self.habits.requests(habit.name)}
+                name = habit.name
+            pending, self._habit_question = self._habit_question, None
+            if pending:
+                user_text = f"{pending['text']}\n（补充）{user_text}"
+            taken = [h.name for h in self.habits.list()]
+            self._habit_busy = True
+            threading.Thread(target=self._run_habit_author,
+                             args=(op, name, user_text, existing, taken, key), daemon=True).start()
+            return
+        if op not in ("pause", "resume", "revert", "delete"):
+            _log(f"habit_edit 的 op 不认识：{op!r}")
+            return
+        habit = self._habit_lookup(name)
+        if habit is None:
+            self._say(sim, HABIT_LINES[key]["unknown"], direct=True, why="没找到要动的习惯")
+            return
+        try:
+            if op == "pause":
+                self.habits.set_enabled(habit.name, False)
+            elif op == "resume":
+                self.habits.set_enabled(habit.name, True)
+                if self.habit_state is not None:
+                    self.habit_state.set_paused(habit.name, "")
+            elif op == "revert":
+                self.habits.revert(habit.name)
+            else:
+                self.habits.delete(habit.name)
+                if self.habit_state is not None:
+                    self.habit_state.forget(habit.name)
+        except HabitError as exc:
+            self._say(sim, HABIT_LINES[key]["failed"], direct=True, why=f"习惯没动成：{exc}")
+            if self.chatlog is not None:
+                self.chatlog.add("system", f"习惯「{habit.title}」没动成：{exc}")
+            return
+        self.log(f"习惯「{habit.title}」{HABIT_OPS[op]}（用户要求）")
+        if self.chatlog is not None:
+            self.chatlog.add("system", f"习惯「{habit.title}」{HABIT_OPS[op]}")
+        self._say(sim, HABIT_LINES[key][op], direct=True, why="你要求动习惯")
+
+    def _run_habit_author(self, op, name, user_text, existing, taken, character) -> None:
+        """工作线程：只有 HTTP。写文件放回主线程（``_drain_habits``）。"""
+        from .habits import author
+
+        try:
+            cap = self.daily_token_cap if self.daily_token_cap > 0 else 0
+            result = author.author(self.client, character, user_text, existing, name=name, taken=taken, day_cap=cap)
+            self._habit_results.put((op, name, user_text, result))
+        except Exception as exc:                       # noqa: BLE001
+            self._habit_results.put((op, name, user_text, exc))
+        finally:
+            self._habit_busy = False
+
+    def _drain_habits(self, sim) -> None:
+        from .habits.store import HabitError
+
+        while True:
+            try:
+                op, hint, user_text, result = self._habit_results.get_nowait()
+            except queue.Empty:
+                return
+            lines = HABIT_LINES[sim.appearance.key]
+            if isinstance(result, Exception):
+                _log(f"HabitAuthor 出错：{type(result).__name__}: {result}")
+                self._say(sim, lines["failed"], direct=True, why="习惯没写成")
+                continue
+            for usage in result.usages:
+                if self.usage is not None:
+                    self.usage.record(usage, source="habit")
+            if not result.ok:
+                _log(f"HabitAuthor 放弃：{result.error}")
+                if self.chatlog is not None:
+                    self.chatlog.add("system", f"习惯没{'建' if op == 'create' else '改'}成：{result.error}")
+                self._say(sim, lines["failed"], direct=True, why="习惯没写成")
+                continue
+            if result.questions:
+                self._habit_question = {"text": user_text, "op": op, "name": hint}
+                self._say(sim, result.questions[0], direct=True, why="要建 / 改习惯，有件事得先问你")
+                continue
+            verb = "建好了" if op == "create" else "改好了"
+            try:
+                habit = self.habits.write(result.name, result.skill_md, result.habit_json, user_text, kind=op,
+                                          message=f"{'新建' if op == 'create' else '修改'}：{result.name}（{result.change_summary}）")
+            except HabitError as exc:
+                _log(f"习惯写入失败：{exc}")
+                self._say(sim, lines["failed"], direct=True, why="习惯没写成")
+                continue
+            self.log(f"习惯「{habit.title}」{verb}：{result.change_summary}")
+            if self.chatlog is not None:
+                self.chatlog.add("system", f"习惯「{habit.title}」{verb}：{result.change_summary}（不对就说“改回去”）")
+            self._say(sim, lines["done"].format(verb=verb, what=result.change_summary[:16]),
+                      direct=True, why="你让我养成 / 改的习惯写好了")
 
     def status(self) -> dict:
         perception = self.perception
