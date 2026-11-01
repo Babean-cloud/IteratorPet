@@ -131,6 +131,9 @@ class Config:
     dsh_wiring: str = "cmd-stdin"
     # 对话窗口的全局快捷键（Ctrl/Alt/Shift/Win + 字母/数字/F1-F12/Space）
     chat_hotkey: str = "Ctrl+Alt+I"
+    # 更新提示：一天最多查一次 GitHub 最新 Release（匿名 GET，不带本机信息）
+    update_check: bool = True
+    update_checked_at: float = 0.0
     config_version: int = CONFIG_VERSION
 
 

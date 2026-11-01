@@ -268,6 +268,12 @@ def add_sound_actions(menu: QMenu, window) -> None:
 def tray_menu(window, on_dev_panel=None) -> QMenu:
     """右键托盘时弹出的菜单（不持有引用：每次现建，避免状态过期）。"""
     menu = QMenu()
+    tag = getattr(window, "update_available", None)
+    if tag:
+        action_update = QAction(f"有新版本 {tag}，去下载…", menu)
+        action_update.triggered.connect(window.open_release_page)
+        menu.addAction(action_update)
+        menu.addSeparator()
     add_ai_actions(menu, window)
     action_pause = QAction("继续" if getattr(window, "paused", False) else "暂停", menu)
     action_pause.triggered.connect(window.toggle_pause)

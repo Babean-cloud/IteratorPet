@@ -187,6 +187,14 @@ class PetWindow(PetCanvas):
             scroll_cps=float(getattr(config, "overseer_scroll_speed", 32.0)))
         self.sound = SoundBoard(config, getattr(config, "install", "") or None)   # 原版音效（sound.py）
         self.sound.start()
+        self.update_available: str | None = None   # GitHub 上有更新的版本时是它的 tag（updates.py）
+        self._updates = None
+        if getattr(config, "update_check", True) and time.time() - float(getattr(config, "update_checked_at", 0) or 0)                 >= 24 * 3600:
+            from .. import __version__
+            from .updates import UpdateChecker
+
+            self._updates = UpdateChecker(__version__)
+            self._updates.start()
         self.bridge = None                       # 编程 agent 的本机接口（bridge.py）
         if getattr(config, "bridge_enabled", True):
             from ..brain.bridge import Bridge
@@ -727,11 +735,35 @@ class PetWindow(PetCanvas):
             self.director._say(self.simulation, "……行，今天我不出声了。" if on else "……那我就接着说了。", direct=True)
 
     # -- 系统状态 ---------------------------------------------------------------
+    def _collect_update(self) -> None:
+        checker = getattr(self, "_updates", None)
+        if checker is None:
+            return
+        done, tag = checker.poll()
+        if not done:
+            return
+        self._updates = None
+        self.config.update_checked_at = time.time()
+        save(self.config)
+        if tag:
+            self.update_available = tag
+            self.chatlog.add("system", f"有新版本 {tag}：托盘菜单里点「有新版本…」去下载")
+            self.simulation.say(f"……外面有新版本了，{tag}。托盘里能找到。")
+
+    def open_release_page(self) -> None:
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+
+        from .updates import RELEASE_PAGE
+
+        QDesktopServices.openUrl(QUrl(RELEASE_PAGE))
+
     def _poll_system(self) -> None:
         from . import system_status
 
         self._collect_pearls()
         self._collect_agent_events()
+        self._collect_update()
         if self.director is None:                # 没开 AI 时提醒也要响（/remind 是纯本地的）；开着时导演自己响
             for text in self.reminders.pop_due():
                 self.chatlog.add("system", f"提醒：{text}")

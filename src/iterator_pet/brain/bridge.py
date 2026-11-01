@@ -24,6 +24,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from .. import __version__
 
 DEFAULT_PORT = 47613
 MAX_BODY = 64 * 1024
@@ -275,7 +276,7 @@ class Bridge:
         if method == "initialize":
             result = {"protocolVersion": (request.get("params") or {}).get("protocolVersion") or MCP_VERSION,
                       "capabilities": {"tools": {}},
-                      "serverInfo": {"name": "iterator-pet", "version": "0.5.0"}}
+                      "serverInfo": {"name": "iterator-pet", "version": __version__}}
         elif method == "ping":
             result = {}
         elif method == "tools/list":
