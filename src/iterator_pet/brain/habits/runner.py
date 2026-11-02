@@ -15,6 +15,7 @@ import json
 import os
 import re
 import threading
+import urllib.parse
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -77,10 +78,24 @@ class HabitRun:
     files: list = field(default_factory=list)
     started: float = field(default_factory=time.time)
     cancelled: bool = False
+    notes_read: list = field(default_factory=list)    # 这次运行读过的 notes 原文（A5：不许拼进 URL / 搜索词）
 
     @property
     def finished(self) -> bool:
         return self.state != "running"
+
+
+LEAK_CHARS = 40          # 笔记里连续这么多字出现在 URL / 搜索词里，就当是在往外送笔记
+
+
+def leaks_notes(sources: list[str], text: str, n: int = LEAK_CHARS) -> bool:
+    """``text``（URL 或搜索词）里有没有任意连续 ``n`` 个字来自读过的笔记 ``sources``（忽略空白、URL 转义）。"""
+    squash = lambda t: "".join(urllib.parse.unquote_plus(t).split())      # noqa: E731
+    probe = squash(text)
+    if len(probe) < n:
+        return False
+    haystacks = [squash(src) for src in sources]
+    return any(probe[i:i + n] in hay for i in range(len(probe) - n + 1) for hay in haystacks if len(hay) >= n)
 
 
 def _tokens(usage) -> int:
@@ -257,7 +272,10 @@ class HabitRunner:
                 raw = path.read_bytes()[: READ_LIMIT * 4]
                 if b"\x00" in raw[:4096]:
                     return f"二进制文件，{path.stat().st_size} 字节"
-                return _clip(raw.decode("utf-8", "replace"), READ_LIMIT)
+                text = raw.decode("utf-8", "replace")
+                if "notes" in {p.lower() for p in path.relative_to(os.path.realpath(root)).parts}:
+                    run.notes_read.append(text)
+                return _clip(text, READ_LIMIT)
             if name == "write_file":
                 content = args.get("content")
                 if not isinstance(content, str):
@@ -276,6 +294,9 @@ class HabitRunner:
                 if shown not in run.files:
                     run.files.append(shown)
                 return "已写入"
+            if name in ("web_search", "web_fetch") and leaks_notes(run.notes_read, str(args.get("query") or args.get("url") or "")):
+                return (f"拒绝：{name} 的参数里带了 notes 里的原文（连续 {LEAK_CHARS} 个字以上）。"
+                        "笔记不能发到网上，换成你自己概括的关键词。")
             if name == "web_search" and web is not None and web.can_search:
                 return web.search(str(args.get("query") or ""))
             if name == "web_fetch" and web is not None:

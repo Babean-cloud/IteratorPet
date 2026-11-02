@@ -328,3 +328,30 @@ def test_global_budget_pauses_model_tasks(tmp_path):
     rig.tick()
     assert client.messages == [] and not rig.director._habit_tasks
     assert len(rig.said) == 1 and "额度" in rig.said[0]
+
+
+def test_notes_text_cannot_be_sent_to_the_web(tmp_path):
+    secret = "我的私人想法：下个月要和房东谈搬家的事情并且不能让任何人知道这件事，包括我的同事和家人还有隔壁邻居"
+    web = FakeWeb()
+    client = ToolClient(
+        msg(call("read_file", path="habits/idea-review/notes/ideas.md")),
+        msg(call("web_search", query="搜一下 " + secret[:45])),
+        msg(call("web_fetch", url="https://example.com/?q=" + __import__("urllib.parse").parse.quote(secret[:45]))),
+        msg(call("web_search", query="房东 搬家 谈判技巧")),
+        msg(call("finish", summary="好")))
+    habit = hab(dict(DIGEST)) | {"permissions": {"web": True, "write": "notes"}}
+    store, state, runner, _ = build(tmp_path, client, habit, web)
+    (tmp_path / "ws" / NOTES / "ideas.md").write_text(secret, encoding="utf-8")
+    runner.start(store.get("idea-review"), habit["triggers"][0])
+    run_to_end(runner)
+    outs = [m[-1]["content"] for m in client.messages[1:]]
+    assert outs[1].startswith("拒绝") and "notes" in outs[1] and outs[2].startswith("拒绝")
+    assert web.queries == ["房东 搬家 谈判技巧"], "概括过的关键词可以发"
+
+
+def test_leaks_notes_unit():
+    src = ["abcdefghij" * 6]
+    assert R.leaks_notes(src, "x" + "abcdefghij" * 4 + "y")
+    assert R.leaks_notes(src, "abcdefghij abcdefghij\nabcdefghij abcdefghij"), "忽略空白"
+    assert not R.leaks_notes(src, "abcdefghij" * 3), "不到 40 个字不算"
+    assert not R.leaks_notes([], "abcdefghij" * 6)
