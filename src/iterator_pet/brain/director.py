@@ -363,8 +363,8 @@ class Director:
 
     def _resolve_suggestion(self, text: str | None) -> None:
         """用户回了话（text），或者等了太久没回（None）：拒绝 / 没理 → 记下，30 天内同类不再提；答应 → 清掉。"""
-        pending = self._pending_suggest
-        if pending is None or self.habit_state is None:
+        pending = getattr(self, "_pending_suggest", None)
+        if pending is None or getattr(self, "habit_state", None) is None:
             return
         self._pending_suggest = None
         if text is not None and not SUGGEST_NO.search(text) and SUGGEST_YES.search(text):
