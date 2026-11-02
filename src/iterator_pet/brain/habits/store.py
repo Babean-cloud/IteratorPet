@@ -384,6 +384,50 @@ class HabitState:
             row["fail_streak"] = 0
         self._save()
 
+    # -- habit_suggest 被拒绝过的提议（B5）：存在特殊键 "_suggest" 下，不属于任何习惯
+    SUGGEST_KEY = "_suggest"
+    SUGGEST_DAYS = 30
+    SUGGEST_SIMILAR = 80
+
+    def suggestion_blocked(self, text: str, now_ts: float) -> bool:
+        """这句提议和 30 天内被拒绝（或没理）的某一句像不像（rapidfuzz 相似度 ≥ 80）。"""
+        from rapidfuzz import fuzz
+
+        cutoff = now_ts - self.SUGGEST_DAYS * 86400
+        for row in self.data.get(self.SUGGEST_KEY, {}).get("rejected", []):
+            if row.get("ts", 0) >= cutoff and fuzz.ratio(text.strip(), row.get("text", "")) >= self.SUGGEST_SIMILAR:
+                return True
+        return False
+
+    def reject_suggestion(self, text: str, now_ts: float) -> None:
+        rows = self.data.setdefault(self.SUGGEST_KEY, {}).setdefault("rejected", [])
+        rows.append({"text": text.strip()[:80], "ts": now_ts})
+        cutoff = now_ts - self.SUGGEST_DAYS * 86400
+        self.data[self.SUGGEST_KEY]["rejected"] = [r for r in rows if r.get("ts", 0) >= cutoff][-50:]
+        self._save()
+
+    # -- habit_suggest 被拒绝过的提议（B5）：存在特殊键 "_suggest" 下，不属于任何习惯
+    SUGGEST_KEY = "_suggest"
+    SUGGEST_DAYS = 30
+    SUGGEST_SIMILAR = 80
+
+    def suggestion_blocked(self, text: str, now_ts: float) -> bool:
+        """这句提议和 30 天内被拒绝（或没理）的某一句像不像（rapidfuzz 相似度 ≥ 80）。"""
+        from rapidfuzz import fuzz
+
+        cutoff = now_ts - self.SUGGEST_DAYS * 86400
+        for row in self.data.get(self.SUGGEST_KEY, {}).get("rejected", []):
+            if row.get("ts", 0) >= cutoff and fuzz.ratio(text.strip(), row.get("text", "")) >= self.SUGGEST_SIMILAR:
+                return True
+        return False
+
+    def reject_suggestion(self, text: str, now_ts: float) -> None:
+        rows = self.data.setdefault(self.SUGGEST_KEY, {}).setdefault("rejected", [])
+        rows.append({"text": text.strip()[:80], "ts": now_ts})
+        cutoff = now_ts - self.SUGGEST_DAYS * 86400
+        self.data[self.SUGGEST_KEY]["rejected"] = [r for r in rows if r.get("ts", 0) >= cutoff][-50:]
+        self._save()
+
     def hashes(self, name: str) -> dict:
         return dict(self.data.get(name, {}).get("hashes") or {})
 

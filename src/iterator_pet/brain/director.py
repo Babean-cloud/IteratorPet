@@ -147,6 +147,10 @@ WHY_LABELS = {
 UNDO_WORDS = re.compile(r"^(?:不对|不行|不好|算了|等等)?[，,。！!\s]*(?:帮我|给我|请)?(?:改回去|改回来|撤销|撤回|还原|恢复原样|恢复原来的?样子?|回到(?:之前|刚才|原来)(?:的样子?)?|退回去?)[吧啊呀。！!\s]*$")
 UNDO_WINDOW = 120.0        # 最近一次习惯改动后多少秒内，短撤销话才兜底
 CHANGE_WINDOW = 600.0      # 观察里带 last_habit_change 的时长
+# 对“要不要做成习惯？”的回答
+SUGGEST_NO = re.compile(r"不用|不要|算了|不需要|不了|先不|不必|别了|没必要|不想")
+SUGGEST_YES = re.compile(r"好|行|可以|要|嗯|成|对|来|做|试试|ok", re.I)
+SUGGEST_WAIT = 600.0       # 提议说出口后多久没回应就算“没理”
 HABIT_OPS = {"pause": "暂停了", "resume": "恢复了", "revert": "撤回到上一版", "delete": "删掉了（放进了回收站）"}
 # 习惯有变动时的话（≤40 字，SAY_MAX_CHARS）；完整的说明另写进对话记录
 HABIT_LINES = {
@@ -225,6 +229,7 @@ class Director:
         self._habit_budget_day: str | None = None  # 全局额度用完的提示今天说过没有
         self._habit_events: set[str] = set()       # 刚发生的内部事件（user_back / task_done / reflect），下次检查习惯时用掉
         self._last_habit_change: dict | None = None   # 最近一次习惯改动 {name,title,op,summary,at}（A1：给“改回去”一个抓手）
+        self._pending_suggest: tuple[str, float] | None = None   # 刚提议过、还没得到回答的 (话, 说出口的时刻)
         self._habit_question: dict | None = None   # 作者反问过的：用户下一句的回答要和原话并在一起再写
         self.pearls = pearls                       # PearlStore（可以没有）
         self._pending_pearls: list[str] = []
@@ -349,11 +354,22 @@ class Director:
                 self.perception.request_full()
                 self._screen_chat_at = self.clock()
             self._pending_chat.append((text[:400], image, screen_capture_attempted))
+            self._resolve_suggestion(text)
             self.log(f"用户对你说：{text[:60]}")
             self.remarks.on_user_chat(text, self.wall().timestamp())
             self.relation.on_talk()
             if self.chatlog is not None:
                 self.chatlog.add("user", text)
+
+    def _resolve_suggestion(self, text: str | None) -> None:
+        """用户回了话（text），或者等了太久没回（None）：拒绝 / 没理 → 记下，30 天内同类不再提；答应 → 清掉。"""
+        pending = self._pending_suggest
+        if pending is None or self.habit_state is None:
+            return
+        self._pending_suggest = None
+        if text is not None and not SUGGEST_NO.search(text) and SUGGEST_YES.search(text):
+            return
+        self.habit_state.reject_suggestion(pending[0], self.wall().timestamp())
 
     def read_pearl(self, pearl_id: str) -> None:
         """用户递来（或在面板里点「再读」）一颗珍珠。下一 tick 就读，不受额度限制。"""
@@ -475,6 +491,8 @@ class Director:
         self._drain_errands(sim)
         self._drain_habits(sim)
         self._drain_habit_runs(sim)
+        if self._pending_suggest is not None and now - self._pending_suggest[1] > SUGGEST_WAIT:
+            self._resolve_suggestion(None)                # 没理
         notice = self._task_notice
         if notice is not None and now - notice[1] > TASK_NOTICE_WAIT:
             # 任务结束了，模型那边迟迟没开口（打盹 / 请求失败 / 被别的事挤掉）：本地说一句，别让人干等
@@ -1317,7 +1335,11 @@ class Director:
                 _log(f"丢弃 habit_use（reason={reason}）")
         suggest = action.get("habit_suggest")
         if reason == "task_done" and isinstance(suggest, str) and suggest.strip():
-            self._say(sim, suggest.strip(), direct=True, why="觉得这件事会反复出现")
+            text = suggest.strip()
+            if self.habit_state is not None and self.habit_state.suggestion_blocked(text, self.wall().timestamp()):
+                _log(f"habit_suggest 30 天内被拒绝过类似的，不再提：{text[:40]}")
+            elif self._say(sim, text, direct=True, why="觉得这件事会反复出现"):
+                self._pending_suggest = (text, self.clock())
 
     def _undo_wanted(self, text: str) -> bool:
         change = self._last_habit_change
