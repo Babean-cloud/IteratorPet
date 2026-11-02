@@ -91,6 +91,39 @@ def _selftest(out: Path) -> int:
                 modes.append(label)
         return "+".join(modes)
 
+    def grants():
+        # 全部文件和授权表都放临时目录；不读取真实配置或用户工作区。
+        from iterator_pet.brain.habits.grants import GrantStore
+        from iterator_pet.brain.habits.files import HabitFiles
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = base / "ws"
+            folder = base / "granted"
+            root.mkdir()
+            folder.mkdir()
+            store = GrantStore(base / "grants.json")
+            store.add(folder)
+            files = HabitFiles(root, store)
+            target = folder / "selftest.txt"
+            files.write(str(target), "旧版本")
+            files.write(str(target), "新版本")
+            backups = list((root / ".history/grants").rglob("*.bak"))
+            assert target.read_text(encoding="utf-8") == "新版本"
+            assert len(backups) == 1 and backups[0].read_text(encoding="utf-8") == "旧版本"
+            try:
+                import send2trash   # noqa: F401
+                mode = "Send2Trash"
+            except ImportError:
+                mode = ".trash"
+            files.delete(str(target))
+            assert not target.exists()
+            if mode == ".trash":
+                copies = list((root / ".trash/grants").rglob("selftest.txt"))
+                assert len(copies) == 1 and copies[0].read_text(encoding="utf-8") == "新版本"
+            return "授权+覆盖备份+删除(" + mode + ")"
+
+    check("grants", grants)
     check("habits", habits)
     check("pypinyin", pinyin)
     check("places", places)

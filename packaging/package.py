@@ -61,8 +61,8 @@ AI（可选，用 DeepSeek）
 -----------------------
 右键 → AI → API Key… 填你的 DeepSeek Key（或设环境变量 DEEPSEEK_API_KEY），
 再勾 AI → AI 驱动。之后它会自己决定去哪、看什么、什么时候开口；会读你前台窗口的
-标题和（本地识别的）文字，有自己的记忆和日记。截图不离开本机，只有识别出的文字进请求；
-密码管理器、聊天软件、银行等窗口不看。右键 → AI → 读屏幕 可以关掉或只看标题。
+标题和（本地识别的）文字，有自己的记忆和日记。默认不开看图时截图不离开本机，识别出的文字会进模型请求；开启看图后截图也可能上传；
+敏感窗口按规则屏蔽，但会漏判，处理隐私时请关闭读屏和看图。右键 → AI → 读屏幕 可以关掉或只看标题。
 
 五块卵石和仰望皓月的记忆、对话记录各是各的，切换角色就像切换对话；它们知道彼此，
 但不知道对方和你聊过什么。token 用量和提醒两边共用。
@@ -75,7 +75,7 @@ AI（可选，用 DeepSeek）
   右键 → AI 状态…   余额、今日用量、它的心情 / 日程 / 记忆 / 反思，「现在反思」
   "半小时后提醒我喝水"  直接对它说就行
   直接说"读一下任务文件夹里的 xx，帮我找出……"  它自己判断要不要接活：任务文件夹里的只读任务直接开始，
-                    要写文件或换文件夹先弹确认卡；每条命令照样要你批准（/work 也还能用）
+                    要写文件或换文件夹先弹确认卡；命令按批准规则执行（/work 也还能用）
   右键 → AI → 接入编程 agent…   Claude Code / Codex / MCP 跑完了直接告诉它（给好了可复制的配置；只在本机、要口令）
   "看到下载好了告诉我"  心事：它自己去看是哪个窗口 / 进程 / 文件，定好怎么盯，等到了告诉你
                     （也可以 /watch 要等的事；/unwatch 全部放下；默认最多等 3 小时）
@@ -94,8 +94,11 @@ AI（可选，用 DeepSeek）
 音视频要装 ffmpeg（放进 PATH，或 config.json 的 ffmpeg_path）；B 站 / YouTube 链接还要装 yt-dlp。
 没字幕的音视频可以配语音识别（config.json 的 asr_base_url / asr_model / asr_api_key）。
 
+详细的能力、授权、命令与隐私风险说明见同目录 README.md（可用文本编辑器打开）。
+
 对话窗口里的「让他/她去做…」：它只能读（可写模式下还能写）你选的那个任务文件夹；
-要运行命令时每一条都会先给你看，你点「允许运行」才执行（PowerShell 5.1，以你的权限运行，
+简单只读命令可能直接运行，其余默认先请你批准；开启自动批准会扩大直接运行范围。
+命令使用 PowerShell 5.1，以你的权限运行（
 只读模式也管不住命令，看清楚再点）。装了 DeepSeek Harness 的话，还可以选「DSH 沙箱」只读执行。
 
 **别把本文件夹放进带了"低完整性"标记的目录再运行**（极少见，一般是某些
@@ -162,6 +165,11 @@ def main() -> int:
         shutil.rmtree(stage)
     shutil.copytree(dist, stage)
     (stage / "使用说明.txt").write_text(README, encoding="utf-8-sig")
+    shutil.copy2(ROOT / "README.md", stage / "README.md")
+    shutil.copy2(ROOT / "LICENSE", stage / "LICENSE")
+    (stage / "docs").mkdir(exist_ok=True)
+    for image in ("readme-pebbles.png", "preview-pixel-lighting.png"):
+        shutil.copy2(ROOT / "docs" / image, stage / "docs" / image)
 
     target = out_dir / f"{FOLDER}-v{version()}-win64.zip"
     if target.exists():
