@@ -80,3 +80,24 @@ def test_workspace_field_shows_live_path_without_freezing_default(tmp_path, monk
     assert panel.values()["workspace_dir"] == str(active)
     panel.save()
     assert win.config.workspace_dir == ""
+
+
+def test_settings_can_open_again_after_close(monkeypatch):
+    from types import SimpleNamespace
+
+    from PySide6.QtWidgets import QApplication
+
+    from iterator_pet.platform.pet_window import PetWindow
+
+    app = QApplication.instance() or QApplication([])
+    monkeypatch.setattr("iterator_pet.platform.autostart.enabled", lambda: False)
+    window = SimpleNamespace(config=Config(), character="pebbles")
+    PetWindow.show_settings(window)
+    first = window._settings
+    first.close()
+    app.processEvents()                             # WA_DeleteOnClose：第一扇窗口已交给 Qt 销毁
+    assert window._settings is None
+    PetWindow.show_settings(window)
+    assert window._settings is not None and window._settings is not first
+    assert window._settings.isVisible()
+    window._settings.close()

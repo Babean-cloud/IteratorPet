@@ -247,3 +247,8 @@ class SettingsWindow(FramedWindow):
         if restart:
             parts.append("有几项重启后生效。")
         self.status.setText("".join(parts) or "没有改动。")
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        if getattr(self.window, "_settings", None) is self:
+            self.window._settings = None            # WA_DeleteOnClose 会销毁 Qt 对象，别留下旧引用
+        super().closeEvent(event)
