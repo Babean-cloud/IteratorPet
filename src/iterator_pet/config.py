@@ -136,6 +136,10 @@ class Config:
     workspace_dir: str = ""
     cheap_hours: str = ""
     habit_default_budget: dict = field(default_factory=lambda: {"run_tokens": 30000, "run_steps": 20, "day_tokens": 80000})
+    grants_short_days: int = 3
+    grants_long_days: int = 30
+    grants_upgrade_window_days: int = 7
+    grants_outside_daily_bytes: int = 1048576
     # 更新提示：一天最多查一次 GitHub 最新 Release（匿名 GET，不带本机信息）
     update_check: bool = True
     update_checked_at: float = 0.0

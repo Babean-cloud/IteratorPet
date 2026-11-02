@@ -179,6 +179,9 @@ class PetWindow(PetCanvas):
         # 习惯（brain/habits/）：数据在工作区（默认 %USERPROFILE%\IteratorWS），运行状态在 %LOCALAPPDATA%；两个角色共用。
         # 第一次真用到才建文件夹，所以这里建对象不碰磁盘
         self.habit_state = HabitState()
+        from ..brain.habits.grants import GrantStore
+
+        self.grants = GrantStore(config=config)
         self.habits = HabitStore(workspace_path(config), day_cap=int(getattr(config, "llm_daily_token_cap", 0) or 0),
                                  default_budget=getattr(config, "habit_default_budget", None), state=self.habit_state)
         from ..brain.pearl_media import PearlMaker
@@ -1157,7 +1160,8 @@ class PetWindow(PetCanvas):
                 habit_scheduler=HabitScheduler(self.habits, self.habit_state, getattr(cfg, "cheap_hours", ""),
                                                watcher=Watcher()),
                 habit_runner=HabitRunner(lambda: self.llm_client(timeout=90.0), self.habits, self.habit_state,
-                                         web_fn=self._web_tools),
+                                         web_fn=self._web_tools, grants=self.grants, config=cfg),
+                grants=self.grants,
             )
             self.director.task_busy_fn = lambda: self.task_busy          # 委托任务在跑时，习惯任务排队
             self.director.on_habit_output = lambda title, text: self._projection_source.post_result(text, title=title)

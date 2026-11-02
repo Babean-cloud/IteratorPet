@@ -58,6 +58,10 @@ FIELDS = (
     Field("习惯", "workspace_dir", "习惯工作区", "folder", hint="习惯和它们的笔记放这里；空 = 用户文件夹下的 IteratorWS；改了立刻换，旧位置的习惯会复制过去"),
     Field("习惯", "cheap_hours", "便宜时段", "hours", hint="后台习惯挪到这段时间跑，例如 00:30-08:30；空 = 准点跑"),
     Field("习惯", "habit_default_budget.day_tokens", "每个习惯每天 token", "int", hint="习惯自己没写预算时的默认值；还受上面的每日总上限约束"),
+    Field("授权", "grants_short_days", "短授权有效期（天）", "int"),
+    Field("授权", "grants_long_days", "长授权有效期（天）", "int"),
+    Field("授权", "grants_upgrade_window_days", "升级观察窗口（天）", "int", hint="窗口内用满 3 个不同的日子，升为长授权"),
+    Field("授权", "grants_outside_daily_bytes", "外部新建每日上限（字节）", "int"),
     Field("外部工具", "ffmpeg_path", "ffmpeg", "text", hint="空 = 在 PATH 里找"),
     Field("外部工具", "ytdlp_path", "yt-dlp", "text"),
     Field("外部工具", "asr_base_url", "语音识别接口", "text", hint="OpenAI 兼容 /audio/transcriptions"),
@@ -67,7 +71,7 @@ FIELDS = (
 )
 
 # 保存后能立刻推给桌宠的；其余重启后生效
-LIVE = {"workspace_dir", "cheap_hours", "habit_default_budget.day_tokens", "llm_talkativeness", "llm_daily_token_cap", "perception", "screen_vision", "task_workspace",
+LIVE = {"workspace_dir", "cheap_hours", "habit_default_budget.day_tokens", "grants_short_days", "grants_long_days", "grants_upgrade_window_days", "grants_outside_daily_bytes", "llm_talkativeness", "llm_daily_token_cap", "perception", "screen_vision", "task_workspace",
         "llm_base_url", "llm_model", "llm_vision_model", "auto_approve_readonly", "auto_approve_all",
         "llm_price_hit", "llm_price_miss", "llm_price_out", "update_check", "auto_quiet",
         "overseer_scroll_speed", "search_provider", "search_api_key", "search_base_url",
@@ -149,6 +153,13 @@ class SettingsWindow(FramedWindow):
             page.addRow(field.label, editor)
             if field.hint:
                 page.addRow("", label(field.hint, "muted"))
+            if field.key == "grants_outside_daily_bytes":
+                self.grant_picker = QComboBox()
+                self._refresh_grants()
+                revoke = QPushButton("撤回选中授权")
+                revoke.clicked.connect(self._revoke_grant)
+                page.addRow("授权文件夹", self.grant_picker)
+                page.addRow("", revoke)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -164,6 +175,22 @@ class SettingsWindow(FramedWindow):
         close_button = QPushButton("关闭")
         close_button.clicked.connect(self.close)
         self.body.addLayout(button_row(save_button, left=(close_button,)))
+
+    def _refresh_grants(self) -> None:
+        self.grant_picker.clear()
+        grants = getattr(self.window, "grants", None)
+        for row in grants.list() if grants is not None else []:
+            expiry = "永久" if row["expires_at"] is None else row["expires_at"].replace("T", " ")
+            if not row["active"]:
+                expiry += "（已过期）"
+            self.grant_picker.addItem(f"{row['path']}｜{expiry}", row["path"])
+
+    def _revoke_grant(self) -> None:
+        grants = getattr(self.window, "grants", None)
+        path = self.grant_picker.currentData()
+        if grants is not None and path and grants.revoke(path):
+            self._refresh_grants()
+            self.status.setText(f"已撤回：{path}")
 
     def _value(self, field: Field):
         if field.key == "_autostart":

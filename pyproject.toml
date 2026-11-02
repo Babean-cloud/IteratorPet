@@ -14,7 +14,7 @@ dependencies = [
     "winrt-Windows.Graphics.Imaging>=4!10.0.28000.2705; sys_platform == 'win32'",
     "winrt-Windows.Storage.Streams>=4!10.0.28000.2705; sys_platform == 'win32'",
     "comtypes>=1.4; sys_platform == 'win32'",
-    "rapidfuzz>=3", "pypinyin>=0.50",
+    "rapidfuzz>=3", "pypinyin>=0.50", "Send2Trash>=1.8",
 ]
 
 [project.optional-dependencies]

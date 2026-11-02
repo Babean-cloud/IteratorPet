@@ -68,7 +68,7 @@ habit.json（schema 固定为 1）：
     git remote get-url origin 2>&1 | Out-Null
     if ($LASTEXITCODE -ne 0) { gh repo create iteratorws --private --source . --push } else { git push }
   说明：仓库只在第一次创建；之后每次只 push。登录靠用户自己的 gh，习惯里不存任何令牌。.gitignore 归程序管，不要写
-- permissions.web：需要上网查资料才设 true；write：notes（只写自己的 notes 文件夹，默认）或 workspace
+- permissions.web：需要上网查资料才设 true；write：notes（只写自己的 notes 文件夹，默认）、workspace（工作区）或 grants（工作区和用户授权的文件夹；其他安全位置只能新建）。只有用户明确要用授权文件夹才选 grants
 - 只有用户明确说了 token / 步数预算才写 budget；可以只写明确指定的项。speak 没特别要求就省略
 - 没有特别说明的细节按最简单保守的做法来，不要自己加用户没要求的触发和权限
 

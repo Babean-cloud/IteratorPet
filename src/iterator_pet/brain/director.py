@@ -187,7 +187,7 @@ class Director:
                  wall=datetime.now, talkativeness: float = 0.5, chatlog=None, context=None,
                  pearls=None, errands=None, watcher=None, sensors=None,
                  on_task_request=None, task_workspace: str | None = None,
-                 habits=None, habit_state=None, habit_scheduler=None, habit_runner=None):
+                 habits=None, habit_state=None, habit_scheduler=None, habit_runner=None, grants=None):
         from . import perception as P
 
         self._new_stats = P.new_stats
@@ -215,6 +215,7 @@ class Director:
         self._errand_results: queue.Queue = queue.Queue()
         # 习惯系统（habits/）：HabitStore 读写工作区里的习惯；HabitState 是运行状态（预算、失败次数）
         self.habits = habits
+        self.grants = grants
         self.habit_state = habit_state
         self._habit_busy = False                   # HabitAuthor 正在写（一次只写一件）
         self._habit_results: queue.Queue = queue.Queue()
@@ -1284,6 +1285,31 @@ class Director:
                                       "workspace": workspace}, user_text)
 
         self._apply_habits(sim, action, reason, user_text)
+
+        request = action.get("grant")
+        if reason == "chat" and user_text and self.grants is not None and isinstance(request, dict):
+            raw = request.get("path")
+            if isinstance(raw, str) and raw.strip():
+                path = (self.memory.resolve_place(raw) if self.memory is not None else None) or raw.strip()
+                # 授权范围必须能在用户原话里找到；模型不能凭屏幕、上下文替用户扩大范围。
+                user_words = user_text.casefold()
+                positive = any(word in user_words for word in ("可以改", "可以写", "可以用", "允许", "授权", "交给你", "给你改", "给你管", "一直给你"))
+                denied = any(word in user_words for word in ("不要", "不准", "不能", "不许", "禁止", "撤回", "别"))
+                import re
+
+                mentioned = any(re.search(re.escape(value.casefold()) + r"(?![\\/A-Za-z0-9_.-])", user_words)
+                                for value in (raw, path))
+                if positive and not denied and mentioned:
+                    from .habits.grants import GrantError
+
+                    try:
+                        forever = bool(request.get("forever")) and "一直给你" in user_words
+                        self.grants.add(path, source="chat", forever=forever)
+                        self.log(f"授权文件夹：{path}")
+                    except GrantError as exc:
+                        if self.chatlog is not None:
+                            self.chatlog.add("system", f"文件夹未授权：{exc}")
+                        self._say(sim, f"这个文件夹不能授权：{exc}", direct=True, why="授权检查")
 
         memory = self.memory
         if memory is None:

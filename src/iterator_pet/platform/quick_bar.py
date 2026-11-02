@@ -114,6 +114,23 @@ def _habit_store(pet):
     return getattr(pet, "habits", None)
 
 
+def _do_grants(pet, command) -> tuple[bool, str]:
+    grants = getattr(pet, "grants", None)
+    if grants is None:
+        return True, "✗ 授权表没启动。"
+    if command.text.startswith("revoke "):
+        path = command.text[7:].strip().strip('"')
+        memory = getattr(pet, "memory", None)
+        if memory is not None:
+            path = memory.resolve_place(path) or path
+        return True, f"✓ 已撤回：{path}" if grants.revoke(path) else f"✗ 找不到这条授权：{path}"
+    rows = grants.list()
+    if not rows:
+        return True, "还没有授权文件夹。"
+    return True, "\n".join(f"{row['path']}｜{'永久' if row['expires_at'] is None else row['expires_at'].replace('T', ' ')}"
+                           + ("（已过期）" if not row["active"] else "") for row in rows)
+
+
 def _do_habits(pet, command) -> tuple[bool, str]:
     store = _habit_store(pet)
     if store is None:

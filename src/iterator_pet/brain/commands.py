@@ -44,6 +44,7 @@ COMMANDS = (
     Spec("drop", "/drop [编号…|all]", "扔掉珍珠；不写就扔最近那颗，可以写几个编号：/drop 2 5", aliases=("toss",)),
     Spec("give", "/give [编号] [捎的话]", "把珍珠转给另一位迭代器；不写编号就是最近那颗"),
     Spec("habits", "/habits", "列出它养成的习惯"),
+    Spec("grants", "/grants [revoke 路径]", "查看文件夹授权、撤回授权"),
     Spec("habit", "/habit 名字 | /habit 名字 改成… | /habit pause|resume|revert|delete 名字", "看详情；直接修改 / 暂停 / 恢复 / 撤回 / 移进回收站"),
     Spec("places", "/places", "列出它记下的地点和别名（用户确认过的）"),
     Spec("forget", "/forget 名字", "忘掉一个地点或别名"),
@@ -131,6 +132,8 @@ def _check(command: Command) -> None:
         raise CommandError("要等什么？比如：/watch 等终端里的测试跑完")
     elif command.name == "forget" and not command.text:
         raise CommandError("忘掉哪个？写名字，比如：/forget MM。名字看 /places")
+    elif command.name == "grants" and command.text and (not command.text.startswith("revoke ") or not command.text[7:].strip()):
+        raise CommandError("写法：/grants 或 /grants revoke 文件夹路径")
     elif command.name == "habit":
         word, _, name = command.text.partition(" ")
         if not command.text:

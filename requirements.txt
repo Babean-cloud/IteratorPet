@@ -12,6 +12,8 @@ comtypes>=1.4; sys_platform == 'win32'
 # 地点簿 / 别名的模糊匹配（字形 + 拼音）
 rapidfuzz>=3
 pypinyin>=0.50
+# 习惯任务删除授权文件时送进系统回收站
+Send2Trash>=1.8
 # 可选（体积大，发布版默认不带）：读 PDF / Office 文档、导出 docx（brain/docs.py）；需要时 pip install -e .[docs]
 # markitdown[pdf,docx,pptx,xlsx]>=0.1.5
 # python-docx>=1.1
