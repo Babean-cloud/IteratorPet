@@ -58,6 +58,7 @@ QT_PLUGIN_DIRS = ("generic", "networkinformation", "platforminputcontexts", "tls
                   "sqldrivers", "iconengines")
 QT_IMAGE_PLUGINS = ("qpdf.dll", "qsvg.dll", "qtga.dll", "qtiff.dll", "qwbmp.dll",
                     "qwebp.dll", "qicns.dll")
+ROOT_DLL_CONFLICTS = ("icudt78.dll", "icuuc.dll")   # 这两个额外的 ICU DLL 会挡住 QtMultimedia 加载；P1 包没有它们
 
 
 def build(out_dir: Path) -> None:
@@ -120,6 +121,11 @@ def prune(out_dir: Path) -> None:
             removed += 1
     for name in QT_IMAGE_PLUGINS:
         target = qt / "plugins" / "imageformats" / name
+        if target.is_file():
+            target.unlink()
+            removed += 1
+    for name in ROOT_DLL_CONFLICTS:
+        target = out_dir / EXE_NAME / "_internal" / name
         if target.is_file():
             target.unlink()
             removed += 1
