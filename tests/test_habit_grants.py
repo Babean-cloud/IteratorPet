@@ -172,6 +172,8 @@ def test_model_cannot_expand_scope_or_invent_forever(tmp_path):
     action = {"grant": {"path": str(folder), "forever": True}}
     director.apply(object(), action, reason="chat", user_text=f"{child} 可以改")
     assert not grants.rows
+    director.apply(object(), action, reason="chat", user_text=f"{folder} 我不是说一直给你")
+    assert not grants.rows
     director.apply(object(), action, reason="chat", user_text=f"{folder} 可以改")
     assert grants.rows[0]["tier"] == "3d"
 

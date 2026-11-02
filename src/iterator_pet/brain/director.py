@@ -1294,7 +1294,7 @@ class Director:
                 # 授权范围必须能在用户原话里找到；模型不能凭屏幕、上下文替用户扩大范围。
                 user_words = user_text.casefold()
                 positive = any(word in user_words for word in ("可以改", "可以写", "可以用", "允许", "授权", "交给你", "给你改", "给你管", "一直给你"))
-                denied = any(word in user_words for word in ("不要", "不准", "不能", "不许", "禁止", "撤回", "别"))
+                denied = any(word in user_words for word in ("不要", "不准", "不能", "不许", "禁止", "撤回", "别", "不是", "没说", "并非"))
                 import re
 
                 mentioned = any(re.search(re.escape(value.casefold()) + r"(?![\\/A-Za-z0-9_.-])", user_words)
