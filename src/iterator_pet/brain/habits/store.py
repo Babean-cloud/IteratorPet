@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -361,6 +362,13 @@ class HabitState:
             row["fail_streak"] = 0
         self._save()
 
+    def hashes(self, name: str) -> dict:
+        return dict(self.data.get(name, {}).get("hashes") or {})
+
+    def set_hashes(self, name: str, hashes: dict) -> None:
+        self.data.setdefault(name, {})["hashes"] = dict(hashes)
+        self._save()
+
     def forget(self, name: str) -> None:
         if self.data.pop(name, None) is not None:
             self._save()
@@ -369,9 +377,10 @@ class HabitState:
 # ---------------------------------------------------------------- 存储
 
 class HabitStore:
-    def __init__(self, root: Path | str, day_cap: int = 0, now=datetime.now, git=find_git, default_budget=None):
+    def __init__(self, root: Path | str, day_cap: int = 0, now=datetime.now, git=find_git, default_budget=None, state=None):
         self.root = Path(root)
         self.day_cap = day_cap
+        self.state = state                                   # HabitState：没有 git 时靠它记哈希来发现手改（A6）
         self.default_budget = clean_budget(default_budget)    # config.habit_default_budget（习惯没写的预算项用它）
         self.now = now
         self._find_git = git
@@ -597,14 +606,41 @@ class HabitStore:
         self._commit_hand_edits(name)
         return self._load(name)
 
-    def _commit_hand_edits(self, name: str) -> None:
+    def _hashes(self, name: str) -> dict:
+        out = {}
+        for fname in ("SKILL.md", "habit.json"):
+            try:
+                out[fname] = hashlib.sha256((self.path(name) / fname).read_bytes()).hexdigest()
+            except OSError:
+                pass
+        return out
+
+    def _note_hashes(self, name: str) -> None:
+        """程序刚写完：把 SKILL.md / habit.json 的 sha256 记下来（只用来发现手改，不涉及权限）。"""
+        if self.state is not None and not self.has_git:
+            self.state.set_hashes(name, self._hashes(name))
+
+    def _commit_hand_edits(self, name: str) -> bool:
+        """发现手改就留一份快照（有 git 提交一次；没有就按哈希发现，复制进 .history）。返回这次是否记了快照。"""
         folder = self.path(name)
-        if not folder.is_dir() or not self.has_git:
-            return
+        if not folder.is_dir():
+            return False
+        if not self.has_git:
+            if self.state is None:
+                return False
+            known, now = self.state.hashes(name), self._hashes(name)
+            self.state.set_hashes(name, now)
+            if not known or known == now:
+                return False                                  # 第一次见到：只记基线
+            self._backup(name)
+            self.append_log(name, {"kind": "hand-edit", "result": "ok", "summary": "文件被手改过，已存一份到 .history"})
+            return True
         # 运行写的 notes 和 log 本来就由程序提交；这里只管习惯本体三个文件
         files = [f"habits/{name}/{f}" for f in PROTECTED_FILES if (folder / f).exists()]
         if files and self.commit(f"手改：{name}", *files):
             self.append_log(name, {"kind": "hand-edit", "result": "ok", "summary": "文件被手改过，已记一次快照"})
+            return True
+        return False
 
     def requests(self, name: str) -> str:
         try:
@@ -632,8 +668,8 @@ class HabitStore:
         if kind == "update" and not exists:
             raise HabitError(f"没有叫“{name}”的习惯可改")
         if exists:
-            self._commit_hand_edits(name)
-            self._backup(name)
+            if not self._commit_hand_edits(name):
+                self._backup(name)                            # 刚存过手改快照就不用再存一份一样的
         folder = self.path(name)
         (folder / "notes").mkdir(parents=True, exist_ok=True)
         _write_text(folder / "SKILL.md", skill_md.replace("\r\n", "\n").rstrip("\n") + "\n")
@@ -646,6 +682,7 @@ class HabitStore:
         elif not (folder / "request.md").exists():
             _write_text(folder / "request.md", "")
         self.commit(message or f"{'新建' if kind == 'create' else '修改'}：{name}", f"habits/{name}")
+        self._note_hashes(name)
         return self._load(name)
 
     def set_enabled(self, name: str, enabled: bool) -> Habit:
@@ -657,6 +694,7 @@ class HabitStore:
         config = dict(habit.config, enabled=enabled)
         _write_text(habit.path / "habit.json", json.dumps(config, ensure_ascii=False, indent=2) + "\n")
         self.commit(f"{'恢复' if enabled else '暂停'}：{name}", f"habits/{name}")
+        self._note_hashes(name)
         return self._load(name)
 
     def append_log(self, name: str, row: dict) -> None:
@@ -688,7 +726,7 @@ class HabitStore:
     def revert(self, name: str) -> Habit:
         """回到上一版的 SKILL.md 和 habit.json（只动这两个；notes 是它的数据，不跟着回退）。"""
         self._ensure()
-        self._commit_hand_edits(name)
+        hand_edited = self._commit_hand_edits(name)
         folder = self.path(name)
         if not (folder / "SKILL.md").is_file():
             raise HabitError(f"没有叫“{name}”的习惯")
@@ -709,6 +747,9 @@ class HabitStore:
             self._run_git("checkout", commits[1], "--", *rel)
         else:
             history = self._history(name)
+            if hand_edited and history:                        # 刚存的手改快照就是现在这版，撤回要越过它
+                shutil.rmtree(history[0].parent, ignore_errors=True)
+                history = history[1:]
             if not history:
                 raise HabitError(f"“{name}”还没有更早的版本可以回")
             for fname in ("SKILL.md", "habit.json"):
@@ -716,6 +757,7 @@ class HabitStore:
             shutil.rmtree(history[0].parent, ignore_errors=True)    # 用掉的这一份，再撤回就轮到更早的
         self._mark_request_revoked(name)
         self.commit(f"撤回：{name}", f"habits/{name}")
+        self._note_hashes(name)
         return self._load(name)
 
     def _mark_request_revoked(self, name: str) -> None:

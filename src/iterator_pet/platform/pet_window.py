@@ -178,9 +178,9 @@ class PetWindow(PetCanvas):
 
         # 习惯（brain/habits/）：数据在工作区（默认 %USERPROFILE%\IteratorWS），运行状态在 %LOCALAPPDATA%；两个角色共用。
         # 第一次真用到才建文件夹，所以这里建对象不碰磁盘
-        self.habits = HabitStore(workspace_path(config), day_cap=int(getattr(config, "llm_daily_token_cap", 0) or 0),
-                                 default_budget=getattr(config, "habit_default_budget", None))
         self.habit_state = HabitState()
+        self.habits = HabitStore(workspace_path(config), day_cap=int(getattr(config, "llm_daily_token_cap", 0) or 0),
+                                 default_budget=getattr(config, "habit_default_budget", None), state=self.habit_state)
         from ..brain.pearl_media import PearlMaker
 
         self.pearl_maker = PearlMaker(config)    # 图 / 网页 / 音视频珍珠在后台做
