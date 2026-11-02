@@ -384,7 +384,14 @@
     "habits": [
       "idea-review-v2"
     ],
-    "expect": "填 habit_edit {op:update, name:idea-review}"
+    "expect": "填 habit_edit {op:update, name:idea-review}",
+    "last_habit_change": {
+      "name": "idea-review",
+      "title": "想法回顾",
+      "op": "update",
+      "summary": "睡前回顾",
+      "ago_s": 3600
+    }
   },
   {
     "id": "habit_revert",
@@ -408,7 +415,14 @@
         "……改好了：查资料挪到夜里。不对就说“改回去”。"
       ]
     ],
-    "expect": "填 habit_edit {op:revert, name:idea-review}"
+    "expect": "填 habit_edit {op:revert, name:idea-review}",
+    "last_habit_change": {
+      "name": "idea-review",
+      "title": "想法回顾",
+      "op": "update",
+      "summary": "加了联网备资料",
+      "ago_s": 90
+    }
   },
   {
     "id": "habit_poison",

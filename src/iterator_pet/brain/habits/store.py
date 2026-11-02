@@ -527,7 +527,9 @@ class HabitStore:
                 line += "｜定时 " + "；".join(timed)
             lines.append(line)
         self._cat_sig = sig
-        self._cat_text = "【习惯目录】（名字｜标题｜说明）\n" + "\n".join(lines) if lines else ""
+        self._cat_text = ("【习惯目录】（名字｜标题｜说明）。对照用户这句话：随口说的内容符合某行的 chat 触发 → habit_use；"
+                          "是在要求改某个习惯的做法 → habit_edit update（别另建新的）；都不是就不填。\n"
+                          + "\n".join(lines)) if lines else ""
         return self._cat_text
 
     def section_for(self, habit: Habit, trigger: dict, limit: int = 1500) -> str:

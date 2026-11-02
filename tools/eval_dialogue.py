@@ -147,6 +147,9 @@ def run_one(sc: dict, client, tmp: Path) -> dict:
     director = Director(relay, clock=lambda: now["t"], idle_fn=lambda: float(sc.get("idle_s", 5)),
                         wall=lambda: datetime(2026, 11, 1, hour, minute),
                         memory=memory, chatlog=chatlog, perception=Eyes(sc.get("screen")), habits=habits)
+    if sc.get("last_habit_change"):                         # 刚改过习惯（A1）：{name,title,op,summary,ago_s}
+        c = dict(sc["last_habit_change"])
+        director._last_habit_change = {**c, "at": now["t"] - float(c.pop("ago_s", 60))}
     context = director.context
     for i in range(int(filler.get("turns", 0))):           # 最近 N 轮原始请求/回复
         context.add_turn(json.dumps({"event": "屏幕有变化", "time": "15:%02d" % (i * 5 % 60), "relation": "认得"},

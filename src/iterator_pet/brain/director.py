@@ -143,6 +143,10 @@ WHY_LABELS = {
 }
 
 
+# 最近改过习惯后，用户一句很短的撤销（A1 本地兜底）
+UNDO_WORDS = re.compile(r"^(?:不对|不行|不好|算了|等等)?[，,。！!\s]*(?:帮我|给我|请)?(?:改回去|改回来|撤销|撤回|还原|恢复原样|恢复原来的?样子?|回到(?:之前|刚才|原来)(?:的样子?)?|退回去?)[吧啊呀。！!\s]*$")
+UNDO_WINDOW = 120.0        # 最近一次习惯改动后多少秒内，短撤销话才兜底
+CHANGE_WINDOW = 600.0      # 观察里带 last_habit_change 的时长
 HABIT_OPS = {"pause": "暂停了", "resume": "恢复了", "revert": "撤回到上一版", "delete": "删掉了（放进了回收站）"}
 # 习惯有变动时的话（≤40 字，SAY_MAX_CHARS）；完整的说明另写进对话记录
 HABIT_LINES = {
@@ -220,6 +224,7 @@ class Director:
         self._habit_inflight = None                # 正在为哪个 inline 习惯请求（apply 时要用）
         self._habit_budget_day: str | None = None  # 全局额度用完的提示今天说过没有
         self._back_pending = False                 # 用户刚回来（user_back 事件，下次检查习惯时用掉）
+        self._last_habit_change: dict | None = None   # 最近一次习惯改动 {name,title,op,summary,at}（A1：给“改回去”一个抓手）
         self._habit_question: dict | None = None   # 作者反问过的：用户下一句的回答要和原话并在一起再写
         self.pearls = pearls                       # PearlStore（可以没有）
         self._pending_pearls: list[str] = []
@@ -911,6 +916,16 @@ class Director:
         if reason == "arrive" and self.pearls is not None and self.pearls.unread_gifts():
             obs["gift_waiting"] = [f"{p['gift'].get('from', '')}转来的「{p['title']}」"
                                    for p in self.pearls.unread_gifts()[:3]]
+        if reason == "chat" and user_text and self.habits is not None and self.habits.catalogue():
+            # 紧贴 user_said 再提醒一次（只放在 system 里的目录，flash 模型常常看漏）
+            obs["habit_check"] = ("先对照习惯目录：这句话本身就是某个 chat 触发要记的内容（想法、话题这类）→ 填 habit_use；"
+                                  "只要话里提到某个习惯在做的事怎么做、几点做、多久一次、联网、何时跑（哪怕没说“习惯”两个字），"
+                                  "就是要改它 → 填 habit_edit update，不要填 habit_use；都不是就都不填")
+        change = self._last_habit_change
+        if change is not None and self.clock() - change["at"] <= CHANGE_WINDOW:
+            obs["last_habit_change"] = {"name": change["name"], "title": change["title"], "op": change["op"],
+                                        "summary": change["summary"],
+                                        "minutes_ago": int((self.clock() - change["at"]) / 60)}
         if self._extra_obs:
             obs.update(self._extra_obs)
             self._extra_obs = {}
@@ -1288,6 +1303,9 @@ class Director:
                 self._habit_edit(sim, edit, user_text)
             else:
                 _log(f"丢弃 habit_edit（reason={reason}，不是用户亲口要求的）：{str(edit)[:80]}")
+        elif reason == "chat" and user_text and self._undo_wanted(user_text):
+            # 模型没填 habit_edit，但用户刚改完习惯就说了句很短的“改回去”：程序直接撤回
+            self._habit_edit(sim, {"op": "revert", "name": self._last_habit_change["name"]}, user_text)
         use = action.get("habit_use")
         if isinstance(use, dict):
             if reason == "chat" and user_text:
@@ -1297,6 +1315,15 @@ class Director:
         suggest = action.get("habit_suggest")
         if reason == "task_done" and isinstance(suggest, str) and suggest.strip():
             self._say(sim, suggest.strip(), direct=True, why="觉得这件事会反复出现")
+
+    def _undo_wanted(self, text: str) -> bool:
+        change = self._last_habit_change
+        return (change is not None and change["op"] not in ("revert", "delete")
+                and self.clock() - change["at"] <= UNDO_WINDOW
+                and len(text.strip()) <= 12 and bool(UNDO_WORDS.match(text.strip())))
+
+    def _note_habit_change(self, name: str, title: str, op: str, summary: str) -> None:
+        self._last_habit_change = {"name": name, "title": title, "op": op, "summary": summary, "at": self.clock()}
 
     def _habit_lookup(self, name: str):
         return self.habits.find(name)
@@ -1378,6 +1405,7 @@ class Director:
             if self.chatlog is not None:
                 self.chatlog.add("system", f"习惯「{habit.title}」没动成：{exc}")
             return
+        self._note_habit_change(habit.name, habit.title, op, HABIT_OPS[op])
         self.log(f"习惯「{habit.title}」{HABIT_OPS[op]}（用户要求）")
         if self.chatlog is not None:
             self.chatlog.add("system", f"习惯「{habit.title}」{HABIT_OPS[op]}")
@@ -1559,6 +1587,7 @@ class Director:
                 for trig in habit.config["triggers"]:     # 新触发从现在起算，不因为“今天这个点已过”立刻补跑
                     if not self.habit_state.last_run(habit.name, trig["id"]):
                         self.habit_state.mark_run(habit.name, trig["id"], self.wall().timestamp())
+            self._note_habit_change(habit.name, habit.title, op, result.change_summary)
             self.log(f"习惯「{habit.title}」{verb}：{result.change_summary}")
             if self.chatlog is not None:
                 self.chatlog.add("system", f"习惯「{habit.title}」{verb}：{result.change_summary}（不对就说“改回去”）")
