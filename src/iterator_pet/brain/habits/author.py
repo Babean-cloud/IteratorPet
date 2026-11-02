@@ -39,7 +39,6 @@ habit.json（schema 固定为 1）：
    {"id":"digest","type":"time","at":"02:00","days":"daily","window":"cheap","run":"task"},
    {"id":"back","type":"event","event":"user_back","run":"inline"}],
  "permissions":{"web":false,"write":"notes"},
- "budget":{"run_tokens":30000,"run_steps":20,"day_tokens":80000},
  "speak":{"priority":"normal"}}
 - type：chat（用户的话命中，只能 inline）/ time（到点；days 取 daily、weekdays、mon,wed、every:3d；at 是 24 小时制 HH:MM）/
   event（发生了某件事；写法 {"id":"x","type":"event","event":"…","run":"inline"|"task",…参数}）。event 取值：
@@ -70,7 +69,7 @@ habit.json（schema 固定为 1）：
     if ($LASTEXITCODE -ne 0) { gh repo create iteratorws --private --source . --push } else { git push }
   说明：仓库只在第一次创建；之后每次只 push。登录靠用户自己的 gh，习惯里不存任何令牌。.gitignore 归程序管，不要写
 - permissions.web：需要上网查资料才设 true；write：notes（只写自己的 notes 文件夹，默认）或 workspace
-- budget、speak 没特别要求就省略
+- 只有用户明确说了 token / 步数预算才写 budget；可以只写明确指定的项。speak 没特别要求就省略
 - 没有特别说明的细节按最简单保守的做法来，不要自己加用户没要求的触发和权限
 
 只依据下面给你的内容；原话里没有的要求不要编。只有缺了就没法做的关键信息（比如“提醒什么内容”）才把问题写进 questions（最多 1 个），
@@ -160,10 +159,10 @@ def author(client, character: str, user_text: str, existing: dict | None = None,
             final = existing["name"] if update else _pick_name(name, skill_md, set(taken))
             skill_md = _set_name(skill_md, final)
             S.validate_skill(final, skill_md)
-            config = S.validate_habit(habit_json, day_cap)
+            S.validate_habit(habit_json, day_cap)
             scripts = _scripts_of(data.get("scripts"), habit_json)
             summary = str(data.get("change_summary") or "").strip()[:60]
-            result.ok, result.name, result.skill_md, result.habit_json = True, final, skill_md, config
+            result.ok, result.name, result.skill_md, result.habit_json = True, final, skill_md, habit_json
             result.scripts = scripts
             result.change_summary = summary or ("改了习惯" if update else "新建了习惯")
             return result

@@ -478,10 +478,12 @@ class HabitStore:
             return 0
         copied = 0
         src = self.root / "habits"
-        if src.is_dir() and not (new / "habits").exists():
+        dest = new / "habits"
+        empty = not dest.exists() or (dest.is_dir() and all(p.name == ".gitkeep" for p in dest.iterdir()))
+        if src.is_dir() and empty:
             new.mkdir(parents=True, exist_ok=True)
-            shutil.copytree(src, new / "habits")
-            copied = sum(1 for d in (new / "habits").iterdir() if d.is_dir())
+            shutil.copytree(src, dest, dirs_exist_ok=True)
+            copied = sum(1 for d in dest.iterdir() if d.is_dir())
         self.root = new
         self._ready = False
         self._git = None
@@ -530,7 +532,7 @@ class HabitStore:
         return True
 
     def _backup(self, name: str) -> None:
-        """没有 git 时，覆盖前把这个习惯的三个文件复制到 .history/<日期时间>/<name>/。"""
+        """没有 git 时，覆盖前把习惯本体和脚本复制到 .history/<日期时间>/<name>/。"""
         if self.has_git:
             return
         src = self.path(name)
@@ -541,6 +543,9 @@ class HabitStore:
                 dest.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(src / fname, dest / fname)
                 copied = True
+        if (src / "scripts").is_dir():
+            shutil.copytree(src / "scripts", dest / "scripts")
+            copied = True
         if copied:
             self._sweep(self.root / ".history", HISTORY_KEEP_DAYS)
 
@@ -768,7 +773,13 @@ class HabitStore:
         folder = self.path(name)
         (folder / "notes").mkdir(parents=True, exist_ok=True)
         _write_text(folder / "SKILL.md", skill_md.replace("\r\n", "\n").rstrip("\n") + "\n")
-        _write_text(folder / "habit.json", json.dumps(config, ensure_ascii=False, indent=2) + "\n")
+        # 磁盘上只存显式预算；运行时 _load 会和当前默认值合并。
+        saved = dict(config)
+        if "budget" in habit_json:
+            saved["budget"] = {key: config["budget"][key] for key in habit_json["budget"]}
+        else:
+            saved.pop("budget")
+        _write_text(folder / "habit.json", json.dumps(saved, ensure_ascii=False, indent=2) + "\n")
         for rel, body in scripts.items():
             (folder / "scripts").mkdir(exist_ok=True)
             # 带 BOM：Windows PowerShell 5.1 不认无 BOM 的 UTF-8，中文会乱码
@@ -792,7 +803,8 @@ class HabitStore:
         if habit.enabled == enabled:
             return habit
         self._backup(name)
-        config = dict(habit.config, enabled=enabled)
+        config = json.loads((habit.path / "habit.json").read_text(encoding="utf-8"))
+        config["enabled"] = enabled
         _write_text(habit.path / "habit.json", json.dumps(config, ensure_ascii=False, indent=2) + "\n")
         self.commit(f"{'恢复' if enabled else '暂停'}：{name}", f"habits/{name}")
         self._note_hashes(name)
@@ -825,7 +837,7 @@ class HabitStore:
 
     # -- 撤回 / 删除
     def revert(self, name: str, to: str = "") -> Habit:
-        """回到上一版的 SKILL.md 和 habit.json（只动这两个；notes 是它的数据，不跟着回退）。
+        """回到上一版的 SKILL.md、habit.json 和 scripts/；notes 是数据，不跟着回退。
         ``to="2026-11-01"``：回到那天结束时的版本（有 git 按提交时间，没有就按 .history 的日期目录）。"""
         self._ensure()
         hand_edited = self._commit_hand_edits(name)
@@ -833,11 +845,11 @@ class HabitStore:
         if not (folder / "SKILL.md").is_file():
             raise HabitError(f"没有叫“{name}”的习惯")
         day = self._parse_day(to) if to else None
-        rel = [f"habits/{name}/SKILL.md", f"habits/{name}/habit.json"]
+        rel = [f"habits/{name}/SKILL.md", f"habits/{name}/habit.json", f"habits/{name}/scripts"]
         if day is not None:
             self._revert_to_day(name, day, rel, hand_edited)
             self._mark_requests_after(name, day)
-            self.commit(f"撤回：{name}（回到 {day.isoformat()} 结束时）", f"habits/{name}")
+            self.commit(f"回到日期：{name}（{day.isoformat()}）", f"habits/{name}")
             self._note_hashes(name)
             return self._load(name)
         if self.has_git:
@@ -853,7 +865,7 @@ class HabitStore:
                     commits.append(sha)
             if len(commits) < 2:
                 raise HabitError(f"“{name}”还没有更早的版本可以回")
-            self._run_git("checkout", commits[1], "--", *rel)
+            self._restore_git_version(name, commits[1])
         else:
             history = self._history(name)
             if hand_edited and history:                        # 刚存的手改快照就是现在这版，撤回要越过它
@@ -863,11 +875,31 @@ class HabitStore:
                 raise HabitError(f"“{name}”还没有更早的版本可以回")
             for fname in ("SKILL.md", "habit.json"):
                 shutil.copy2(history[0] / fname, folder / fname)
+            self._restore_scripts(folder, history[0])
             shutil.rmtree(history[0].parent, ignore_errors=True)    # 用掉的这一份，再撤回就轮到更早的
         self._mark_request_revoked(name)
         self.commit(f"撤回：{name}", f"habits/{name}")
         self._note_hashes(name)
         return self._load(name)
+
+    @staticmethod
+    def _restore_scripts(folder: Path, source: Path) -> None:
+        target = folder / "scripts"
+        if target.is_dir():
+            shutil.rmtree(target)
+        if (source / "scripts").is_dir():
+            shutil.copytree(source / "scripts", target)
+
+    def _restore_git_version(self, name: str, sha: str) -> None:
+        folder = self.path(name)
+        prefix = f"habits/{name}/scripts"
+        scripts = self._run_git("ls-tree", "-r", "--name-only", sha, "--", prefix).splitlines()
+        self._run_git("checkout", sha, "--", f"habits/{name}/SKILL.md", f"habits/{name}/habit.json")
+        if (folder / "scripts").is_dir():
+            shutil.rmtree(folder / "scripts")
+        if scripts:
+            self._run_git("checkout", sha, "--", *scripts)
+        self._run_git("add", "-A", "--", prefix)
 
     @staticmethod
     def _parse_day(text: str) -> date:
@@ -889,9 +921,12 @@ class HabitStore:
             line = self._run_git("log", "-1", "--format=%H", f"--before={day.isoformat()} 23:59:59", "--", *rel).strip()
             if not line:
                 raise HabitError(f"{day.isoformat()} 那天结束时还没有这个习惯的记录")
-            before = {f: (folder / f).read_bytes() for f in ("SKILL.md", "habit.json")}
-            self._run_git("checkout", line, "--", *rel)
-            if {f: (folder / f).read_bytes() for f in before} == before:
+            before = {str(p.relative_to(folder)): p.read_bytes() for p in folder.rglob("*")
+                      if p.is_file() and (p.name in ("SKILL.md", "habit.json") or "scripts" in p.parts)}
+            self._restore_git_version(name, line)
+            after = {str(p.relative_to(folder)): p.read_bytes() for p in folder.rglob("*")
+                     if p.is_file() and (p.name in ("SKILL.md", "habit.json") or "scripts" in p.parts)}
+            if after == before:
                 raise HabitError(f"现在就是 {day.isoformat()} 结束时的样子，没有要回退的")
             return
         # 没有 git：.history 里每个目录是“某次覆盖之前”的样子。那天结束后的第一次覆盖前存的那份，就是那天结束时的样子；
@@ -904,6 +939,7 @@ class HabitStore:
         self._backup(name)                                   # 回退前先留一份当前的，想反悔还能撤回
         for fname in ("SKILL.md", "habit.json"):
             shutil.copy2(target / fname, folder / fname)
+        self._restore_scripts(folder, target)
 
     def _mark_requests_after(self, name: str, day: date) -> None:
         parts = _ENTRY_SPLIT.split(self.requests(name))

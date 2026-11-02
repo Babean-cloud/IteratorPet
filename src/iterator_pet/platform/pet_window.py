@@ -21,7 +21,7 @@ from ..simulation.state import SimulationState
 from .fixed_loop import DEFAULT_MAX_SUBSTEPS, GAME_DT, FixedStepLoop
 from .workspace import ScreenWorkspace, pet_rect
 from . import cursorfx, windows_overlay
-from .projections import PRI_INPUT, PRI_NOTICE, STATUS_TTL, ConfirmOffer, ProjectionQueue, ProjectionSource
+from .projections import PRI_INPUT, PRI_NOTICE, STATUS_TTL, TPS, ConfirmOffer, ProjectionQueue, ProjectionSource
 
 
 # 没开 AI 时，编程 agent 的通知用这几句转达
@@ -1161,6 +1161,7 @@ class PetWindow(PetCanvas):
             )
             self.director.task_busy_fn = lambda: self.task_busy          # 委托任务在跑时，习惯任务排队
             self.director.on_habit_output = lambda title, text: self._projection_source.post_result(text, title=title)
+            self.director.on_habit_notice = self._post_habit_notice
             from ..brain import sensors
 
             sensors.BLACKLIST = tuple(cfg.perception_blacklist or DEFAULT_BLACKLIST)
@@ -1171,6 +1172,11 @@ class PetWindow(PetCanvas):
         self.simulation.pending_events.clear()
         if self.director is None:
             self.simulation.clear_directive()
+
+    def _post_habit_notice(self, title: str, details: list[str]) -> None:
+        if self.overseer_enabled:
+            self.projections.post("habit_notice", PRI_NOTICE,
+                                  [Line(title, "title"), *(Line(item) for item in details)], ttl=8 * TPS)
 
     def llm_client(self, timeout: float = 20.0):
         """按当前配置建一个客户端；没 Key 返回 None。"""

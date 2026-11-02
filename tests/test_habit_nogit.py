@@ -66,7 +66,11 @@ def test_set_root_switches_workspace_live_and_copies_habits(tmp_path):
     assert store.set_root(new) == 0
     third = tmp_path / "third"
     third.joinpath("habits").mkdir(parents=True)
-    assert store.set_root(third) == 0 and store.list() == [], "新位置已有 habits 文件夹就不覆盖也不复制"
+    (third / "habits" / ".gitkeep").touch()
+    assert store.set_root(third) == 1 and [h.name for h in store.list()] == ["idea-review"]
+    fourth = tmp_path / "fourth"
+    (fourth / "habits" / "existing").mkdir(parents=True)
+    assert store.set_root(fourth) == 0, "新位置有真实内容时不合并"
 
 
 def test_habits_command_shows_where_the_files_are(tmp_path):

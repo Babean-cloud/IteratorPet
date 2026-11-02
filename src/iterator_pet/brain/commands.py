@@ -44,7 +44,7 @@ COMMANDS = (
     Spec("drop", "/drop [编号…|all]", "扔掉珍珠；不写就扔最近那颗，可以写几个编号：/drop 2 5", aliases=("toss",)),
     Spec("give", "/give [编号] [捎的话]", "把珍珠转给另一位迭代器；不写编号就是最近那颗"),
     Spec("habits", "/habits", "列出它养成的习惯"),
-    Spec("habit", "/habit 名字 | /habit pause|resume|revert 名字", "看一个习惯的详情；暂停 / 恢复 / 撤回到上一版"),
+    Spec("habit", "/habit 名字 | /habit 名字 改成… | /habit pause|resume|revert|delete 名字", "看详情；直接修改 / 暂停 / 恢复 / 撤回 / 移进回收站"),
     Spec("places", "/places", "列出它记下的地点和别名（用户确认过的）"),
     Spec("forget", "/forget 名字", "忘掉一个地点或别名"),
     Spec("char", "/char [卵石|月]", "换角色；不写就换成另一个", aliases=("swap",)),
@@ -55,7 +55,7 @@ COMMANDS = (
 )
 _BY_NAME = {alias: spec for spec in COMMANDS for alias in (spec.name, *spec.aliases)}
 
-HABIT_OPS = ("pause", "resume", "revert")
+HABIT_OPS = ("pause", "resume", "revert", "delete")
 CHARACTER_WORDS = {"pebbles": "pebbles", "卵石": "pebbles", "五块卵石": "pebbles", "fp": "pebbles",
                    "moon": "past_moon", "月": "past_moon", "月亮": "past_moon", "皓月": "past_moon",
                    "仰望皓月": "past_moon", "lttm": "past_moon", "past_moon": "past_moon"}
@@ -137,6 +137,10 @@ def _check(command: Command) -> None:
             raise CommandError("看哪个习惯？写名字，比如：/habit idea-review。名字看 /habits")
         if word in HABIT_OPS and not name.strip():
             raise CommandError(f"{word} 哪个习惯？写法：/habit {word} 名字。名字看 /habits")
+        if " 改成" in command.text:
+            habit_name, _, change = command.text.partition(" 改成")
+            if not habit_name.strip() or not change.strip():
+                raise CommandError("写法：/habit 名字 改成……")
     elif command.name == "char" and command.text and character_of(command.text) is None:
         raise CommandError("只有 卵石 / 月 两个。")
     elif command.name == "park" and command.text.strip().lower() not in SIDE_WORDS:

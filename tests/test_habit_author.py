@@ -58,7 +58,7 @@ def test_author_creates():
     client = FakeClient(reply())
     result = A.author(client, "pebbles", "帮我记想法", None, name="")
     assert result.ok and result.name == "idea-review" and result.change_summary == "记想法并每晚回顾"
-    assert result.habit_json["budget"]["run_steps"] == 20 and len(result.usages) == 1
+    assert "budget" not in result.habit_json and len(result.usages) == 1
 
 
 def test_author_input_is_only_the_users_words_and_files():
@@ -133,6 +133,7 @@ class World:
             if not self.director._habit_busy and self.director._habit_results.empty():
                 break
             time.sleep(0.01)
+        self.director._drain_habit_runs(self.sim)
 
 
 CREATE = {"habit_edit": {"op": "create", "brief": "记想法"}}
@@ -162,7 +163,7 @@ def test_failure_says_so_and_writes_nothing(tmp_path):
     w = World(tmp_path, reply(habit=bad), reply(habit=bad))
     w.apply(CREATE)
     w.settle()
-    assert w.store.list() == [] and len(w.said) == 1 and "没弄成" in w.said[0]
+    assert w.store.list() == [] and len(w.said) == 1 and "没建成" in w.said[0]
 
 
 def test_question_writes_nothing_then_answer_is_merged(tmp_path):

@@ -153,9 +153,22 @@ def _do_habit(pet, command) -> tuple[bool, str]:
     state = getattr(pet, "habit_state", None)
     word, _, rest = command.text.partition(" ")
     op, name = (word, rest.strip()) if word in cmd.HABIT_OPS else ("", command.text.strip())
+    change = ""
+    if not op and " 改成" in command.text:
+        name, _, tail = command.text.partition(" 改成")
+        name, change = name.strip(), "改成" + tail
     habit = store.find(name)
     if habit is None:
         return True, f"✗ 没有叫“{name}”的习惯。/habits 看名字。"
+    if change:
+        if pet.director is None:
+            pet.set_llm_enabled(True)
+        if pet.director is None:
+            return True, "✗ AI 没开，没法修改习惯。"
+        if pet.director._habit_busy:
+            return True, "✗ 还有一个习惯正在写，等它写完再试。"
+        pet.director._habit_edit(pet.simulation, {"op": "update", "name": habit.name}, change)
+        return True, f"✓ 正在修改「{habit.title}」，写好后会告诉你。"
     if op:
         try:
             if op == "pause":
@@ -164,11 +177,17 @@ def _do_habit(pet, command) -> tuple[bool, str]:
                 store.set_enabled(habit.name, True)
                 if state is not None:
                     state.set_paused(habit.name, "")
-            else:
+            elif op == "revert":
                 store.revert(habit.name)
+            else:
+                store.delete(habit.name)
+                if state is not None:
+                    state.forget(habit.name)
+                if pet.director is not None:
+                    pet.director._note_habit_change(habit.name, habit.title, "delete", "移进回收站")
         except HabitError as exc:
             return True, f"✗ {exc}"
-        return True, f"✓ 「{habit.title}」{ {'pause': '暂停了', 'resume': '恢复了', 'revert': '撤回到上一版了'}[op] }。"
+        return True, f"✓ 「{habit.title}」{ {'pause': '暂停了', 'resume': '恢复了', 'revert': '撤回到上一版了', 'delete': '已移进 .trash'}[op] }。"
     lines = [f"{habit.title}（{habit.name}）{'' if habit.enabled else '　已暂停'}", habit.description]
     lines.append(f"文件：{habit.path}")
     lines += ["　" + _trigger_text(t) for t in habit.config["triggers"]]

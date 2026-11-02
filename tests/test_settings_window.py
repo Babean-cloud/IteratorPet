@@ -64,3 +64,19 @@ def test_habit_settings():
     changed, bad = S.apply_values(cfg, {"cheap_hours": "半夜", "habit_default_budget.day_tokens": "abc"})
     assert not changed and set(bad) == {"便宜时段", "每个习惯每天 token"} and cfg.cheap_hours == "00:30-08:30"
     assert S.apply_values(cfg, {"cheap_hours": ""})[0] == ["cheap_hours"], "清空 = 准点跑"
+
+
+def test_workspace_field_shows_live_path_without_freezing_default(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from PySide6.QtWidgets import QApplication
+
+    QApplication.instance() or QApplication([])
+    monkeypatch.setattr("iterator_pet.platform.autostart.enabled", lambda: False)
+    active = tmp_path / "IteratorWS"
+    win = SimpleNamespace(config=Config(), character="pebbles", habits=SimpleNamespace(root=active),
+                          apply_settings=lambda changed: False)
+    panel = S.SettingsWindow(win)
+    assert panel.values()["workspace_dir"] == str(active)
+    panel.save()
+    assert win.config.workspace_dir == ""

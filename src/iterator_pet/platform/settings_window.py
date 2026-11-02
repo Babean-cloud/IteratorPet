@@ -170,6 +170,10 @@ class SettingsWindow(FramedWindow):
             from . import autostart
 
             return autostart.enabled()
+        if field.key == "workspace_dir":
+            store = getattr(self.window, "habits", None)
+            if store is not None:
+                return str(store.root)                  # 显示当前真正生效的位置，不显示尚未生效的旧配置
         return get_value(self.window.config, field.key)
 
     def _editor(self, field: Field) -> QWidget:
@@ -226,6 +230,10 @@ class SettingsWindow(FramedWindow):
 
     def save(self) -> None:
         values = self.values()
+        store = getattr(self.window, "habits", None)
+        if store is not None and not self.window.config.workspace_dir \
+                and values.get("workspace_dir") == str(store.root):
+            values["workspace_dir"] = ""             # 默认位置只用于显示，保存别的设置时不把默认值写死
         from . import autostart
 
         boot = bool(values.pop("_autostart"))

@@ -224,6 +224,7 @@ class Director:
         self.habit_runner = habit_runner           # task 类习惯的后台运行（habits/runner.py）
         self.task_busy_fn = None                   # 委托任务在跑吗：在跑就让习惯任务排队（委托优先）
         self.on_habit_output = None                # (标题, 全文) → 长结果用投影给用户看
+        self.on_habit_notice = None                # (标题, 三行内容) → 建改结果短投影
         self._habit_say: list[tuple[str, bool, str]] = []   # 习惯任务跑完、等着开口的话 (话, 是否 direct, 原因)
         self._habit_inflight = None                # 正在为哪个 inline 习惯请求（apply 时要用）
         self._habit_budget_day: str | None = None  # 全局额度用完的提示今天说过没有
@@ -1327,6 +1328,12 @@ class Director:
         elif reason == "chat" and user_text and self._undo_wanted(user_text):
             # 模型没填 habit_edit，但用户刚改完习惯就说了句很短的“改回去”：程序直接撤回
             self._habit_edit(sim, {"op": "revert", "name": self._last_habit_change["name"]}, user_text)
+        elif reason == "chat" and user_text and self._last_habit_change is not None \
+                and self._last_habit_change["op"] == "exists" \
+                and self.clock() - self._last_habit_change["at"] <= CHANGE_WINDOW \
+                and re.match(r"^(改它[吧。]?|(?:把它)?改成.+)$", user_text.strip()):
+            self._habit_edit(sim, {"op": "update", "name": self._last_habit_change["name"]}, user_text)
+            return
         use = action.get("habit_use")
         if isinstance(use, dict):
             if reason == "chat" and user_text:
@@ -1349,6 +1356,26 @@ class Director:
 
     def _note_habit_change(self, name: str, title: str, op: str, summary: str) -> None:
         self._last_habit_change = {"name": name, "title": title, "op": op, "summary": summary, "at": self.clock()}
+
+    def _habit_feedback(self, speech: str, title: str, lines: list[str]) -> None:
+        self._habit_say.append((speech, True, "习惯写入结果"))
+        if self.on_habit_notice is not None:
+            self.on_habit_notice(title, lines)
+
+    def _similar_habit(self, text: str):
+        """用户再次说同一件事时，先和已有标题、说明、原话比较。"""
+        from rapidfuzz import fuzz
+
+        if re.search(r"另建一个|再建一个新的?|另外建一个|新建另一个", text):
+            return None
+        best, score = None, 0.0
+        for habit in self.habits.list():
+            requests = [part.split("\n", 1)[-1].strip() for part in self.habits.recent_requests(habit.name)]
+            for candidate in (habit.title, habit.description, *requests):
+                current = fuzz.WRatio(text, candidate)
+                if current > score:
+                    best, score = habit, current
+        return best if score >= 80 else None
 
     def _habit_lookup(self, name: str):
         return self.habits.find(name)
@@ -1384,8 +1411,18 @@ class Director:
                 self._say(sim, HABIT_LINES[key]["busy"], direct=True, why="习惯还在写")
                 return
             existing = None
+            if op == "create":
+                similar = self._similar_habit(user_text)
+                if similar is not None:
+                    self._note_habit_change(similar.name, similar.title, "exists", "已经有这个习惯")
+                    self._habit_feedback(f"已经有「{similar.title}」了，要改它吗？", "习惯已存在",
+                                         [similar.title, "这件事之前已经建过", str(similar.path)])
+                    return
             if op == "update":
                 habit = self._habit_lookup(name)
+                if habit is None and not name and self._last_habit_change is not None \
+                        and self._last_habit_change["op"] == "exists":
+                    habit = self._habit_lookup(self._last_habit_change["name"])
                 if habit is None:
                     self._say(sim, HABIT_LINES[key]["unknown"], direct=True, why="没找到要改的习惯")
                     return
@@ -1395,7 +1432,8 @@ class Director:
                     self._say(sim, HABIT_LINES[key]["failed"], direct=True, why=f"习惯读不了：{exc}")
                     return
                 existing = {"name": habit.name, "skill_md": (habit.path / "SKILL.md").read_text(encoding="utf-8"),
-                            "habit_json": habit.config, "requests": self.habits.requests(habit.name)}
+                            "habit_json": json.loads((habit.path / "habit.json").read_text(encoding="utf-8")),
+                            "requests": self.habits.requests(habit.name)}
                 name = habit.name
             pending, self._habit_question = self._habit_question, None
             if pending:
@@ -1498,8 +1536,9 @@ class Director:
                 self._habit_run_done(run)
         if self._habit_say and not self.quiet and not self.away and not self.muted_today \
                 and not sim.dialogue.text:
-            text, direct, why = self._habit_say.pop(0)
-            self._say(sim, text, direct=direct, why=why)
+            text, direct, why = self._habit_say[0]
+            if self._say(sim, text, direct=direct, why=why):
+                self._habit_say.pop(0)
 
     def _habit_run_done(self, run) -> None:
         for usage in run.usages:
@@ -1603,7 +1642,7 @@ class Director:
             lines = HABIT_LINES[sim.appearance.key]
             if isinstance(result, Exception):
                 _log(f"HabitAuthor 出错：{type(result).__name__}: {result}")
-                self._say(sim, lines["failed"], direct=True, why="习惯没写成")
+                self._habit_feedback(f"没建成：{str(result)[:80]}", "没建成", [str(result)[:100]])
                 continue
             for usage in result.usages:
                 if self.usage is not None:
@@ -1612,7 +1651,7 @@ class Director:
                 _log(f"HabitAuthor 放弃：{result.error}")
                 if self.chatlog is not None:
                     self.chatlog.add("system", f"习惯没{'建' if op == 'create' else '改'}成：{result.error}")
-                self._say(sim, lines["failed"], direct=True, why="习惯没写成")
+                self._habit_feedback(f"没建成：{result.error[:80]}", "没建成", [result.error[:100]])
                 continue
             if result.questions:
                 self._habit_question = {"text": user_text, "op": op, "name": hint}
@@ -1625,7 +1664,7 @@ class Director:
                                           message=f"{'新建' if op == 'create' else '修改'}：{result.name}（{result.change_summary}）")
             except HabitError as exc:
                 _log(f"习惯写入失败：{exc}")
-                self._say(sim, lines["failed"], direct=True, why="习惯没写成")
+                self._habit_feedback(f"没建成：{str(exc)[:80]}", "没建成", [str(exc)[:100]])
                 continue
             if self.habit_state is not None:
                 for trig in habit.config["triggers"]:     # 新触发从现在起算，不因为“今天这个点已过”立刻补跑
@@ -1635,8 +1674,9 @@ class Director:
             self.log(f"习惯「{habit.title}」{verb}：{result.change_summary}")
             if self.chatlog is not None:
                 self.chatlog.add("system", f"习惯「{habit.title}」{verb}：{result.change_summary}（不对就说“改回去”）")
-            self._say(sim, lines["done"].format(verb=verb, what=result.change_summary[:16]),
-                      direct=True, why="你让我养成 / 改的习惯写好了")
+            self._habit_feedback(lines["done"].format(verb=verb, what=result.change_summary[:16]),
+                                 "习惯已建好" if op == "create" else "已修改",
+                                 [habit.title, result.change_summary[:80], str(habit.path)])
 
     def status(self) -> dict:
         perception = self.perception
