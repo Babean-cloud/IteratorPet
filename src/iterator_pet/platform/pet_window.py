@@ -178,7 +178,8 @@ class PetWindow(PetCanvas):
 
         # 习惯（brain/habits/）：数据在工作区（默认 %USERPROFILE%\IteratorWS），运行状态在 %LOCALAPPDATA%；两个角色共用。
         # 第一次真用到才建文件夹，所以这里建对象不碰磁盘
-        self.habits = HabitStore(workspace_path(config), day_cap=int(getattr(config, "llm_daily_token_cap", 0) or 0))
+        self.habits = HabitStore(workspace_path(config), day_cap=int(getattr(config, "llm_daily_token_cap", 0) or 0),
+                                 default_budget=getattr(config, "habit_default_budget", None))
         self.habit_state = HabitState()
         from ..brain.pearl_media import PearlMaker
 
@@ -1536,6 +1537,12 @@ class PetWindow(PetCanvas):
             director.daily_token_cap = int(cfg.llm_daily_token_cap)
             director.screen_vision_mode = cfg.screen_vision
             director.task_workspace = self.task_workspace()
+        if "cheap_hours" in changed and director is not None and director.habit_scheduler is not None:
+            director.habit_scheduler.set_cheap_hours(cfg.cheap_hours)
+        if "habit_default_budget.day_tokens" in changed:
+            from ..brain.habits.store import clean_budget
+
+            self.habits.default_budget = clean_budget(cfg.habit_default_budget)
         if "perception_blacklist" in changed:
             from ..brain import sensors
             from ..brain.perception import DEFAULT_BLACKLIST
@@ -1547,7 +1554,7 @@ class PetWindow(PetCanvas):
         if director is not None and {"llm_base_url", "llm_model", "llm_vision_model"} & set(changed):
             self._setup_brain()                  # 换了接口 / 模型：重建客户端
         save(cfg)
-        return bool({"chat_hotkey", "bridge_enabled"} & set(changed))
+        return bool({"chat_hotkey", "bridge_enabled", "workspace_dir"} & set(changed))
 
     def show_ai_panel(self) -> None:
         from .ai_panel import AIPanel

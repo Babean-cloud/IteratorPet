@@ -23,7 +23,8 @@ class Field:
     section: str
     key: str              # config 字段名；以 _ 开头的是不进 config 的（比如开机自启写注册表）
     label: str
-    kind: str             # text / secret / bool / int / float / choice / slider / list / folder
+    kind: str             # text / secret / bool / int / float / choice / slider / list / folder / hours
+    # key 里带点（habit_default_budget.day_tokens）= config 里某个字典字段的一项
     options: tuple = ()   # choice：((值, 显示), ...)
     hint: str = ""
 
@@ -54,6 +55,9 @@ FIELDS = (
           (("", "不用（只能读网页）"), ("tavily", "Tavily"), ("brave", "Brave"), ("searxng", "SearXNG"))),
     Field("联网", "search_api_key", "搜索服务 Key", "secret"),
     Field("联网", "search_base_url", "SearXNG 地址", "text"),
+    Field("习惯", "workspace_dir", "习惯工作区", "folder", hint="习惯和它们的笔记放这里；空 = 用户文件夹下的 IteratorWS（改了重启后生效）"),
+    Field("习惯", "cheap_hours", "便宜时段", "hours", hint="后台习惯挪到这段时间跑，例如 00:30-08:30；空 = 准点跑"),
+    Field("习惯", "habit_default_budget.day_tokens", "每个习惯每天 token", "int", hint="习惯自己没写预算时的默认值；还受上面的每日总上限约束"),
     Field("外部工具", "ffmpeg_path", "ffmpeg", "text", hint="空 = 在 PATH 里找"),
     Field("外部工具", "ytdlp_path", "yt-dlp", "text"),
     Field("外部工具", "asr_base_url", "语音识别接口", "text", hint="OpenAI 兼容 /audio/transcriptions"),
@@ -63,11 +67,25 @@ FIELDS = (
 )
 
 # 保存后能立刻推给桌宠的；其余重启后生效
-LIVE = {"llm_talkativeness", "llm_daily_token_cap", "perception", "screen_vision", "task_workspace",
+LIVE = {"cheap_hours", "habit_default_budget.day_tokens", "llm_talkativeness", "llm_daily_token_cap", "perception", "screen_vision", "task_workspace",
         "llm_base_url", "llm_model", "llm_vision_model", "auto_approve_readonly", "auto_approve_all",
         "llm_price_hit", "llm_price_miss", "llm_price_out", "update_check", "auto_quiet",
         "overseer_scroll_speed", "search_provider", "search_api_key", "search_base_url",
         "ffmpeg_path", "ytdlp_path", "asr_base_url", "asr_model", "asr_api_key", "perception_blacklist"}
+
+
+def get_value(cfg, key: str):
+    head, _, item = key.partition(".")
+    value = getattr(cfg, head)
+    return (value or {}).get(item) if item else value
+
+
+def set_value(cfg, key: str, new) -> None:
+    head, _, item = key.partition(".")
+    if item:
+        setattr(cfg, head, {**(getattr(cfg, head) or {}), item: new})
+    else:
+        setattr(cfg, head, new)
 
 
 def apply_values(cfg, values: dict) -> tuple[list[str], list[str]]:
@@ -78,7 +96,7 @@ def apply_values(cfg, values: dict) -> tuple[list[str], list[str]]:
         field = by_key.get(key)
         if field is None or key.startswith("_"):
             continue
-        old = getattr(cfg, key)
+        old = get_value(cfg, key)
         try:
             if field.kind == "int":
                 new = max(0, int(str(raw).strip() or 0))
@@ -89,6 +107,12 @@ def apply_values(cfg, values: dict) -> tuple[list[str], list[str]]:
                 new = bool(raw)
             elif field.kind == "list":
                 new = [s.strip() for s in str(raw).replace("，", ",").split(",") if s.strip()]
+            elif field.kind == "hours":
+                from ..brain.habits.scheduler import parse_cheap_hours
+
+                new = str(raw).strip()
+                if new and parse_cheap_hours(new) is None:
+                    raise ValueError(new)
             elif field.kind == "choice":
                 new = str(raw)
                 if new not in {value for value, _ in field.options}:
@@ -99,7 +123,7 @@ def apply_values(cfg, values: dict) -> tuple[list[str], list[str]]:
             bad.append(field.label)
             continue
         if new != old:
-            setattr(cfg, key, new)
+            set_value(cfg, key, new)
             changed.append(key)
     return changed, bad
 
@@ -146,7 +170,7 @@ class SettingsWindow(FramedWindow):
             from . import autostart
 
             return autostart.enabled()
-        return getattr(self.window.config, field.key)
+        return get_value(self.window.config, field.key)
 
     def _editor(self, field: Field) -> QWidget:
         value = self._value(field)

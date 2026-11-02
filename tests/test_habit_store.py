@@ -280,3 +280,10 @@ def test_workspace_path(monkeypatch, tmp_path):
     assert S.workspace_path(Cfg()) == tmp_path / "IteratorWS"
     Cfg.workspace_dir = str(tmp_path / "elsewhere")
     assert S.workspace_path(Cfg()) == tmp_path / "elsewhere"
+
+
+def test_default_budget_from_config(tmp_path):
+    store = HabitStore(tmp_path / "ws", git=lambda: None, default_budget={"day_tokens": 5000, "run_steps": -3, "x": 1})
+    assert store.default_budget == {"run_tokens": 30000, "run_steps": 20, "day_tokens": 5000}
+    habit = store.write("idea-review", SKILL, CONFIG, "x", kind="create")
+    assert habit.config["budget"]["day_tokens"] == 5000

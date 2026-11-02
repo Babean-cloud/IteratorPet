@@ -150,7 +150,18 @@ def valid_days(days) -> bool:
     return bool(parts) and all(part in WEEKDAYS for part in parts)
 
 
-def validate_habit(data, day_cap: int = 0) -> dict:
+def clean_budget(raw) -> dict:
+    """config 里的默认预算 → 合法的三项（缺的 / 不合法的用内置默认）。"""
+    out = dict(DEFAULT_BUDGET)
+    if isinstance(raw, dict):
+        for key in BUDGET_KEYS:
+            value = raw.get(key)
+            if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+                out[key] = value
+    return out
+
+
+def validate_habit(data, day_cap: int = 0, defaults: dict | None = None) -> dict:
     """校验 habit.json，返回补全了缺省值的副本。``day_cap`` = 全局每日 token 上限（0 = 不限）。"""
     if not isinstance(data, dict):
         raise HabitError("habit.json 必须是一个对象")
@@ -221,7 +232,7 @@ def validate_habit(data, day_cap: int = 0) -> dict:
     budget = data.get("budget", {})
     if not isinstance(budget, dict):
         raise HabitError("budget 必须是对象")
-    merged = dict(DEFAULT_BUDGET)
+    merged = dict(defaults or DEFAULT_BUDGET)
     for key, value in budget.items():
         if key not in BUDGET_KEYS:
             raise HabitError(f"budget 里没有“{key}”这一项（只有 {'/'.join(BUDGET_KEYS)}）")
@@ -358,9 +369,10 @@ class HabitState:
 # ---------------------------------------------------------------- 存储
 
 class HabitStore:
-    def __init__(self, root: Path | str, day_cap: int = 0, now=datetime.now, git=find_git):
+    def __init__(self, root: Path | str, day_cap: int = 0, now=datetime.now, git=find_git, default_budget=None):
         self.root = Path(root)
         self.day_cap = day_cap
+        self.default_budget = clean_budget(default_budget)    # config.habit_default_budget（习惯没写的预算项用它）
         self.now = now
         self._find_git = git
         self.errors: dict[str, str] = {}            # list() 时跳过的坏习惯：名字 → 原因
@@ -466,7 +478,7 @@ class HabitStore:
         except (OSError, ValueError) as exc:
             raise HabitError(f"习惯“{name}”的文件读不了：{exc}") from None
         meta, body = validate_skill(name, skill)
-        config = validate_habit(raw, self.day_cap)
+        config = validate_habit(raw, self.day_cap, self.default_budget)
         md = meta.get("metadata") if isinstance(meta.get("metadata"), dict) else {}
         return Habit(name=name, title=str(md.get("iteratorpet-title") or name), description=meta["description"],
                      body=body, meta=meta, config=config,
@@ -612,7 +624,7 @@ class HabitStore:
         if kind not in ("create", "update"):
             raise HabitError(f"kind 只能是 create 或 update，收到 {kind!r}")
         validate_skill(name, skill_md)
-        config = validate_habit(habit_json, self.day_cap)
+        config = validate_habit(habit_json, self.day_cap, self.default_budget)
         self._ensure()
         exists = self.exists(name)
         if kind == "create" and exists:

@@ -27,7 +27,7 @@ def test_apply_values_parses_and_reports_bad():
 def test_fields_match_config():
     names = {f.name for f in Config.__dataclass_fields__.values()}
     for field in S.FIELDS:
-        assert field.key.startswith("_") or field.key in names, field.key
+        assert field.key.startswith("_") or field.key.split(".")[0] in names, field.key
 
 
 def test_window_round_trip(monkeypatch):
@@ -53,3 +53,14 @@ def test_window_round_trip(monkeypatch):
     panel.save()
     assert win.config.chat_hotkey == "Ctrl+Alt+K" and applied == [["chat_hotkey"]]
     assert "重启后生效" in panel.status.text()
+
+
+def test_habit_settings():
+    cfg = Config()
+    changed, bad = S.apply_values(cfg, {"cheap_hours": "00:30-08:30", "habit_default_budget.day_tokens": "120000",
+                                        "workspace_dir": "D:/ws"})
+    assert set(changed) == {"cheap_hours", "habit_default_budget.day_tokens", "workspace_dir"} and not bad
+    assert cfg.habit_default_budget == {"run_tokens": 30000, "run_steps": 20, "day_tokens": 120000}
+    changed, bad = S.apply_values(cfg, {"cheap_hours": "半夜", "habit_default_budget.day_tokens": "abc"})
+    assert not changed and set(bad) == {"便宜时段", "每个习惯每天 token"} and cfg.cheap_hours == "00:30-08:30"
+    assert S.apply_values(cfg, {"cheap_hours": ""})[0] == ["cheap_hours"], "清空 = 准点跑"
