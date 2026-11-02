@@ -297,12 +297,12 @@ class ProjectionSource:
                                                    Line("详情在对话窗口里", "body", 0.6)],
                             ttl=10 * TPS, width=WIDE)
 
-    def post_result(self, text: str) -> None:
+    def post_result(self, text: str, title: str = "演算结果") -> None:
         """长结果：慢速上滚，滚完停几秒；点一下展开完整对话窗口。"""
         cps = max(1.0, self.scroll_cps)
         # 特别长的结果别让监视者一直挂着：总时长封顶（鼠标停在面板上时倒计时是冻住的；想看全文点一下展开）
         ttl = int(min(SCROLL_DELAY + len(text) / cps + SCROLL_LINGER, SCROLL_MAX) * TPS)
-        self.queue.post("result", PRI_RESULT, [Line("演算结果", "title", icon="check")], ttl=ttl, width=WIDE,
+        self.queue.post("result", PRI_RESULT, [Line(title[:24], "title", icon="check")], ttl=ttl, width=WIDE,
                         scroll_text=text, scroll_cps=cps, buttons=(), on_click=self._result_click)
 
     def _result_click(self, name: str) -> None:

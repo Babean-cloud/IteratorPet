@@ -266,3 +266,12 @@ def test_task_panel_stays_while_running_and_failure_is_projected():
     task.state, task.error, task.finished = "failed", "超时", True
     src.observe(task=task)
     assert q.current.kind == "result" and any(line.warn for line in q.current.lines)
+
+
+def test_result_title_is_overridable_and_defaults_unchanged():
+    q = P.ProjectionQueue()
+    src = P.ProjectionSource(q, scroll_cps=32.0)
+    src.post_result("正文")
+    assert q.current.lines[0].text == "演算结果"
+    src.post_result("正文", title="想法回顾")
+    assert q.current.lines[0].text == "想法回顾" and q.current.scroll_text == "正文"

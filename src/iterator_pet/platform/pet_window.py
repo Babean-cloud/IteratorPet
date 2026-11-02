@@ -1158,7 +1158,7 @@ class PetWindow(PetCanvas):
                                          web_fn=self._web_tools),
             )
             self.director.task_busy_fn = lambda: self.task_busy          # 委托任务在跑时，习惯任务排队
-            self.director.on_habit_output = lambda title, text: self._projection_source.post_result(f"【{title}】\n{text}")
+            self.director.on_habit_output = lambda title, text: self._projection_source.post_result(text, title=title)
             from ..brain import sensors
 
             sensors.BLACKLIST = tuple(cfg.perception_blacklist or DEFAULT_BLACKLIST)
