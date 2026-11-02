@@ -760,14 +760,22 @@ class HabitStore:
         return out
 
     # -- 撤回 / 删除
-    def revert(self, name: str) -> Habit:
-        """回到上一版的 SKILL.md 和 habit.json（只动这两个；notes 是它的数据，不跟着回退）。"""
+    def revert(self, name: str, to: str = "") -> Habit:
+        """回到上一版的 SKILL.md 和 habit.json（只动这两个；notes 是它的数据，不跟着回退）。
+        ``to="2026-11-01"``：回到那天结束时的版本（有 git 按提交时间，没有就按 .history 的日期目录）。"""
         self._ensure()
         hand_edited = self._commit_hand_edits(name)
         folder = self.path(name)
         if not (folder / "SKILL.md").is_file():
             raise HabitError(f"没有叫“{name}”的习惯")
+        day = self._parse_day(to) if to else None
         rel = [f"habits/{name}/SKILL.md", f"habits/{name}/habit.json"]
+        if day is not None:
+            self._revert_to_day(name, day, rel, hand_edited)
+            self._mark_requests_after(name, day)
+            self.commit(f"撤回：{name}（回到 {day.isoformat()} 结束时）", f"habits/{name}")
+            self._note_hashes(name)
+            return self._load(name)
         if self.has_git:
             # 撤回本身也是一次提交：从新往旧数，每遇到一个“撤回”就跳过它撤掉的那一版，剩下的才是有效版本
             commits, skip = [], 0
@@ -796,6 +804,54 @@ class HabitStore:
         self.commit(f"撤回：{name}", f"habits/{name}")
         self._note_hashes(name)
         return self._load(name)
+
+    @staticmethod
+    def _parse_day(text: str) -> date:
+        try:
+            return date.fromisoformat(str(text).strip())
+        except ValueError:
+            raise HabitError(f"日期要写成 YYYY-MM-DD，收到“{text}”") from None
+
+    def _created_day(self, name: str) -> date | None:
+        match = re.search(r"(?m)^## (\d{4}-\d{2}-\d{2}) ", self.requests(name))
+        return date.fromisoformat(match.group(1)) if match else None
+
+    def _revert_to_day(self, name: str, day: date, rel: list[str], hand_edited: bool) -> None:
+        created = self._created_day(name)
+        if created is not None and day < created:
+            raise HabitError(f"“{name}”是 {created.isoformat()} 才有的，{day.isoformat()} 那天还没有它")
+        folder = self.path(name)
+        if self.has_git:
+            line = self._run_git("log", "-1", "--format=%H", f"--before={day.isoformat()} 23:59:59", "--", *rel).strip()
+            if not line:
+                raise HabitError(f"{day.isoformat()} 那天结束时还没有这个习惯的记录")
+            before = {f: (folder / f).read_bytes() for f in ("SKILL.md", "habit.json")}
+            self._run_git("checkout", line, "--", *rel)
+            if {f: (folder / f).read_bytes() for f in before} == before:
+                raise HabitError(f"现在就是 {day.isoformat()} 结束时的样子，没有要回退的")
+            return
+        # 没有 git：.history 里每个目录是“某次覆盖之前”的样子。那天结束后的第一次覆盖前存的那份，就是那天结束时的样子；
+        # 那天之后一直没覆盖过，现在就是
+        end = day.strftime("%Y%m%d")
+        later = sorted((h for h in self._history(name) if h.parent.name[:8] > end), key=lambda h: h.parent.name)
+        if not later:
+            raise HabitError(f"现在就是 {day.isoformat()} 结束时的样子，没有要回退的")
+        target = later[0]
+        self._backup(name)                                   # 回退前先留一份当前的，想反悔还能撤回
+        for fname in ("SKILL.md", "habit.json"):
+            shutil.copy2(target / fname, folder / fname)
+
+    def _mark_requests_after(self, name: str, day: date) -> None:
+        parts = _ENTRY_SPLIT.split(self.requests(name))
+        changed = False
+        for i, part in enumerate(parts):
+            match = re.match(r"## (\d{4}-\d{2}-\d{2}) ", part)
+            if match and date.fromisoformat(match.group(1)) > day and "（已撤回）" not in part.splitlines()[0]:
+                head, _, rest = part.partition("\n")
+                parts[i] = f"{head}（已撤回）\n{rest}"
+                changed = True
+        if changed:
+            _write_text(self.path(name) / "request.md", "".join(parts))
 
     def _mark_request_revoked(self, name: str) -> None:
         parts = _ENTRY_SPLIT.split(self.requests(name))

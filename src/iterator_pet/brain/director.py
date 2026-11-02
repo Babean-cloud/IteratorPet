@@ -153,11 +153,11 @@ HABIT_LINES = {
     "pebbles": {"done": "……{verb}：{what}。不对就说“改回去”。", "busy": "……上一件还在写，等着。",
                 "unknown": "……我不记得有这个习惯。说清楚点。", "failed": "……没弄成。详情在对话窗口里。",
                 "budget": "……今天的额度用完了。要动脑子的习惯先停到明天。",
-                "pause": "……停了。", "resume": "……接着干。", "revert": "……改回去了。", "delete": "……扔了，还在回收站里。"},
+                "pause": "……停了。", "resume": "……接着干。", "revert": "……改回去了。", "revert_to": "……回到 {day} 的样子了。", "delete": "……扔了，还在回收站里。"},
     "past_moon": {"done": "{verb}：{what}。不合意就说“改回去”。", "busy": "上一件还在写，请稍等。",
                   "unknown": "我不记得有这样的习惯，能说得再清楚些吗？", "failed": "没能写成，原因在对话窗口里。",
                   "budget": "今天的额度用完了，要费心思的习惯先歇到明天。",
-                  "pause": "先停下了。", "resume": "又开始了。", "revert": "已经改回去了。", "delete": "收起来了，回收站里还留着。"},
+                  "pause": "先停下了。", "resume": "又开始了。", "revert": "已经改回去了。", "revert_to": "已经回到 {day} 的样子了。", "delete": "收起来了，回收站里还留着。"},
 }
 
 
@@ -919,6 +919,7 @@ class Director:
                                    for p in self.pearls.unread_gifts()[:3]]
         if reason == "chat" and user_text and self.habits is not None and self.habits.catalogue():
             # 紧贴 user_said 再提醒一次（只放在 system 里的目录，flash 模型常常看漏）
+            obs["date"] = self.wall().strftime("%Y-%m-%d %A")             # “回到上周的版本”要按它换算成日期
             obs["habit_check"] = ("先对照习惯目录：这句话本身就是某个 chat 触发要记的内容（想法、话题这类）→ 填 habit_use；"
                                   "只要话里提到某个习惯在做的事怎么做、几点做、多久一次、联网、何时跑（哪怕没说“习惯”两个字），"
                                   "就是要改它 → 填 habit_edit update，不要填 habit_use；都不是就都不填")
@@ -1397,7 +1398,7 @@ class Director:
                 if self.habit_state is not None:
                     self.habit_state.set_paused(habit.name, "")
             elif op == "revert":
-                self.habits.revert(habit.name)
+                self.habits.revert(habit.name, to=str(edit.get("to") or "").strip())
             else:
                 self.habits.delete(habit.name)
                 if self.habit_state is not None:
@@ -1407,11 +1408,13 @@ class Director:
             if self.chatlog is not None:
                 self.chatlog.add("system", f"习惯「{habit.title}」没动成：{exc}")
             return
-        self._note_habit_change(habit.name, habit.title, op, HABIT_OPS[op])
+        to_day = str(edit.get("to") or "").strip() if op == "revert" else ""
+        self._note_habit_change(habit.name, habit.title, op, HABIT_OPS[op] if not to_day else f"回到 {to_day} 结束时的样子")
         self.log(f"习惯「{habit.title}」{HABIT_OPS[op]}（用户要求）")
         if self.chatlog is not None:
             self.chatlog.add("system", f"习惯「{habit.title}」{HABIT_OPS[op]}")
-        self._say(sim, HABIT_LINES[key][op], direct=True, why="你要求动习惯")
+        self._say(sim, HABIT_LINES[key]["revert_to"].format(day=to_day) if to_day else HABIT_LINES[key][op],
+                  direct=True, why="你要求动习惯")
 
     def _check_habits(self, sim=None) -> None:
         """跟着感知节拍：哪些习惯到点了。inline 排队等开口，task 排队等后台跑。"""
