@@ -18,7 +18,8 @@ MAX_TOKENS = 3000
 RETRIES = 1
 
 FORMAT_GUIDE = """你负责把用户的原话整理成一个“习惯”（长期重复执行的工作流）。只输出一个 JSON 对象：
-{"skill_md": "完整的 SKILL.md 文本", "habit_json": {…}, "change_summary": "一句话说这次建了 / 改了什么（≤30 字）", "questions": []}
+{"skill_md": "完整的 SKILL.md 文本", "habit_json": {…}, "change_summary": "一句话说这次建了 / 改了什么（≤30 字）", "questions": [], "scripts": {}}
+（scripts 只有用到 run:"script" 时才写，见下）
 
 SKILL.md 格式（Agent Skills 标准）：
 ---
@@ -51,6 +52,23 @@ habit.json（schema 固定为 1）：
 - window:"cheap" 只给 task 的 time 触发用：放到便宜的夜间时段去跑，用户提到“晚上便宜 / 夜里跑”才加
 - 凡是要联网查资料、整理、写摘要这类要多步、要调模型才能完成的活，必须有一个对应的 run:task 的触发（time 或 event），
   不能只开 web 权限、也不能放在 inline 里；用户没说几点就放夜里（如 02:00）并加 window:"cheap"；时间没说就用默认，不要为时间反问
+- run:"script"：不用调模型、固定步骤的事（定时推送、备份、清理）。触发里写 "script":"scripts/名字.ps1"，
+  并在输出的 "scripts" 里给出脚本内容：{"scripts": {"名字.ps1": "…PowerShell 5.1 脚本…"}}。脚本在工作区根目录里跑，超时 120 秒；
+  只动工作区里的东西，不要写工作区外的路径，也不要往脚本里写任何密码或令牌。不是固定步骤、要判断的事别用脚本，用 task
+- 示例（用户说“把我的工作区定时同步到 GitHub 私人仓库”）：一个 time 触发 {"id":"push","type":"time","at":"23:00","days":"daily","run":"script","script":"scripts/sync.ps1"}，
+  脚本内容：
+    $ErrorActionPreference = 'Stop'
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw '没有装 git' }
+    if (-not (Get-Command gh -ErrorAction SilentlyContinue)) { throw '没有装 gh（GitHub CLI）：请用户先装好' }
+    gh auth status 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw '还没登录 GitHub：请用户自己在终端运行 gh auth login' }
+    git rev-parse --is-inside-work-tree 2>&1 | Out-Null
+    git add -A
+    git diff --cached --quiet
+    if ($LASTEXITCODE -ne 0) { git commit -m ('sync ' + (Get-Date -Format 'yyyy-MM-dd HH:mm')) }
+    git remote get-url origin 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { gh repo create iteratorws --private --source . --push } else { git push }
+  说明：仓库只在第一次创建；之后每次只 push。登录靠用户自己的 gh，习惯里不存任何令牌。.gitignore 归程序管，不要写
 - permissions.web：需要上网查资料才设 true；write：notes（只写自己的 notes 文件夹，默认）或 workspace
 - budget、speak 没特别要求就省略
 - 没有特别说明的细节按最简单保守的做法来，不要自己加用户没要求的触发和权限
@@ -67,6 +85,7 @@ class AuthorResult:
     habit_json: dict = field(default_factory=dict)
     change_summary: str = ""
     questions: list[str] = field(default_factory=list)
+    scripts: dict = field(default_factory=dict)        # {"scripts/名字.ps1": 内容}
     usages: list[dict] = field(default_factory=list)
     error: str = ""
 
@@ -142,8 +161,10 @@ def author(client, character: str, user_text: str, existing: dict | None = None,
             skill_md = _set_name(skill_md, final)
             S.validate_skill(final, skill_md)
             config = S.validate_habit(habit_json, day_cap)
+            scripts = _scripts_of(data.get("scripts"), habit_json)
             summary = str(data.get("change_summary") or "").strip()[:60]
             result.ok, result.name, result.skill_md, result.habit_json = True, final, skill_md, config
+            result.scripts = scripts
             result.change_summary = summary or ("改了习惯" if update else "新建了习惯")
             return result
         except (S.HabitError, ValueError) as exc:
@@ -153,6 +174,29 @@ def author(client, character: str, user_text: str, existing: dict | None = None,
                              {"role": "user", "content": f"校验没通过：{exc}。请改正后重新输出完整的 JSON。"}]
     result.ok = False
     return result
+
+
+def _scripts_of(raw, habit_json: dict) -> dict:
+    """作者给的脚本 → {"scripts/名字.ps1": 内容}；名字不合规、脚本会越界就抛 HabitError（作者重试一次）。"""
+    from .runner import script_block_reason
+
+    if raw is None:
+        raw = {}
+    if not isinstance(raw, dict):
+        raise S.HabitError("scripts 必须是 {\"名字.ps1\": \"内容\"} 这样的对象")
+    out = {}
+    for name, body in raw.items():
+        rel = str(name).replace("\\", "/")
+        rel = rel if rel.startswith("scripts/") else "scripts/" + rel.lstrip("/")
+        if not S.SCRIPT_RE.match(rel):
+            raise S.HabitError(f"脚本名“{name}”不合规：只用字母、数字、下划线、连字符，扩展名 .ps1")
+        if not isinstance(body, str) or not body.strip():
+            raise S.HabitError(f"脚本 {rel} 的内容是空的")
+        why = script_block_reason(body)
+        if why:
+            raise S.HabitError(f"脚本 {rel} 不能这样写：{why}。只动工作区里的东西")
+        out[rel] = body
+    return out
 
 
 def _parse(text: str) -> dict:

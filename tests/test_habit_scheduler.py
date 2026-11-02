@@ -169,10 +169,10 @@ class DialogueClient:
 
 
 class Rig:
-    def __init__(self, tmp_path, reply, habit=None):
+    def __init__(self, tmp_path, reply, habit=None, scripts=None):
         self.clock, self.wall = Clock(), {"t": T(2026, 11, 2, 21, 0)}
         self.store = HabitStore(tmp_path / "ws", git=lambda: None, now=lambda: self.wall["t"])
-        self.store.write("idea-review", SKILL, habit or hab(REVIEW), "x", kind="create")
+        self.store.write("idea-review", SKILL, habit or hab(REVIEW), "x", kind="create", scripts=scripts)
         self.state = HabitState(tmp_path / "state.json", today=lambda: self.wall["t"].date())
         self.client = DialogueClient(reply)
         self.director = Director(self.client, clock=self.clock, idle_fn=lambda: 0.0, wall=lambda: self.wall["t"],

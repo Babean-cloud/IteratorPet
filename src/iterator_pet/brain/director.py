@@ -1419,7 +1419,7 @@ class Director:
             return
         events, self._habit_events = tuple(self._habit_events), set()
         for due in self.habit_scheduler.due(self.wall(), quiet=self.quiet, away=self.away, events=events):
-            queue_ = self._habit_inline if due.run == "inline" else self._habit_tasks
+            queue_ = self._habit_inline if due.run == "inline" else self._habit_tasks     # task / script 都进后台队列
             if any(d.name == due.name and d.id == due.id for d in queue_):
                 continue
             if self.habit_state is not None:
@@ -1429,23 +1429,31 @@ class Director:
             self._pump_habit_tasks(sim)
 
     def _pump_habit_tasks(self, sim) -> None:
-        """排队的 task 习惯一次开一个。委托任务在跑就等着（用户当面交代的优先）；全局额度用完就先停到明天（H10）。"""
+        """排队的 task / script 习惯一次开一个。脚本不调模型：全局额度用完也照跑（H10）。
+        调模型的 task 在委托任务跑着时让路（用户当面交代的优先），额度用完就先停到明天。"""
         runner = self.habit_runner
-        if runner is None or not self._habit_tasks:
+        if runner is None or not self._habit_tasks or runner.busy:
             return
-        if runner.busy or (self.task_busy_fn is not None and self.task_busy_fn()):
-            return
-        if self.over_budget:
-            self._habit_tasks.clear()
+        if self.over_budget and any(d.run != "script" for d in self._habit_tasks):
+            self._habit_tasks = [d for d in self._habit_tasks if d.run == "script"]
             self._habit_over_budget(sim)
+        waiting = self.task_busy_fn is not None and self.task_busy_fn()
+        pick = next((d for d in self._habit_tasks if d.run == "script" or not waiting), None)
+        if pick is None:
             return
-        due = self._habit_tasks.pop(0)
+        self._habit_tasks.remove(pick)
+        due = pick
         try:
             habit = self.habits.peek(due.name)
         except Exception as exc:                       # noqa: BLE001
             _log(f"习惯 {due.name} 读不了：{exc}")
             return
         if not habit.enabled or (self.habit_state is not None and self.habit_state.paused(due.name)):
+            return
+        if due.run == "script":
+            self.habits.commit(f"运行前：{due.name}", f"habits/{due.name}")
+            if runner.start_script(habit, due.trigger) is not None:
+                self.log(f"习惯「{habit.title}」在后台跑脚本（{due.id}）")
             return
         if self.habit_state is not None and self.habit_state.day_tokens(due.name) >= habit.config["budget"]["day_tokens"]:
             self.habits.append_log(due.name, {"trigger": due.id, "kind": "task", "result": "over_budget",
@@ -1473,12 +1481,15 @@ class Director:
             if self.usage is not None:
                 self.usage.record(usage, source="habit")
         ok = run.state != "failed"
-        self.habits.append_log(run.name, {"trigger": run.trigger_id, "kind": "task", "tokens": run.tokens,
-                                          "steps": run.steps, "result": run.state, "summary": run.summary[:200],
-                                          "files": run.files})
+        row = {"trigger": run.trigger_id, "kind": run.kind, "tokens": run.tokens, "steps": run.steps,
+               "result": run.state, "summary": run.summary[:200], "files": run.files}
+        if run.kind == "script":
+            row["output"] = run.output
+        self.habits.append_log(run.name, row)
         self.habits.commit(f"运行：{run.name}（{run.state}）", f"habits/{run.name}")
         self.log(f"习惯「{run.title}」跑完了（{run.state}）：{run.summary[:40]}")
-        if self.chatlog is not None and run.state != "cancelled":
+        quiet_ok = run.kind == "script" and run.state == "done"        # 定时推送成功了不用每次都往对话记录里写
+        if self.chatlog is not None and run.state != "cancelled" and not quiet_ok:
             self.chatlog.add("system", f"习惯「{run.title}」{'跑完了' if ok else '没跑成'}：{run.summary[:200]}")
         if self.habit_state is not None:
             self.habit_state.add_tokens(run.name, run.tokens)
@@ -1487,9 +1498,13 @@ class Director:
                 self._habit_say.append((f"……「{run.title}」连着失败三回，我先停了它。", True, "习惯连续失败，自动暂停了"))
         if run.state == "done" and run.say:
             self._habit_say.append((run.say, run.priority == "high", f"习惯「{run.title}」跑完了"))
+        elif run.state == "blocked":
+            # 脚本想动工作区外的东西：没跑。下次用户在场时告诉一句，让他自己去看
+            self._habit_say.append((f"……「{run.title}」的脚本想动工作区外的东西，我没跑。你去 scripts 里看看。", True,
+                                    f"习惯「{run.title}」的脚本被拦下了"))
         elif run.state == "over_budget":
             _log(f"习惯 {run.name}：{run.summary}")
-        if run.summary and len(run.summary) > 40 and self.on_habit_output is not None and run.state == "done":
+        if run.summary and len(run.summary) > 40 and self.on_habit_output is not None and run.state == "done" and run.kind == "task":
             self.on_habit_output(run.title, run.summary)
 
     def _habit_over_budget(self, sim) -> None:
@@ -1581,6 +1596,7 @@ class Director:
             verb = "建好了" if op == "create" else "改好了"
             try:
                 habit = self.habits.write(result.name, result.skill_md, result.habit_json, user_text, kind=op,
+                                          scripts=result.scripts,
                                           message=f"{'新建' if op == 'create' else '修改'}：{result.name}（{result.change_summary}）")
             except HabitError as exc:
                 _log(f"习惯写入失败：{exc}")

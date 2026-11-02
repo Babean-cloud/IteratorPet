@@ -22,7 +22,9 @@ from pathlib import Path
 NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")        # 小写字母、数字、连字符；不以连字符开头结尾；没有 --
 MAX_BODY_LINES = 500
 TRIGGER_TYPES = ("chat", "time", "event")
-RUN_KINDS = ("inline", "task")
+RUN_KINDS = ("inline", "task", "script")      # script：不调模型，跑习惯文件夹里 scripts/ 下的 .ps1
+SCRIPT_RE = re.compile(r"^scripts/[A-Za-z0-9_\-]{1,48}\.ps1$")
+MAX_SCRIPT_CHARS = 20000
 INTERNAL_EVENTS = ("user_back", "day_start", "task_done", "reflect")          # 桌宠自己的事件
 WATCH_EVENTS = ("title_change", "window_gone", "window_appears", "text_appears", "process_exit", "file_change")   # 和心事的触发同名
 EVENTS = INTERNAL_EVENTS + WATCH_EVENTS
@@ -196,6 +198,13 @@ def validate_habit(data, day_cap: int = 0, defaults: dict | None = None) -> dict
         if run not in RUN_KINDS:
             raise HabitError(f"{where}.run 只能是 {'/'.join(RUN_KINDS)}")
         item = {"id": tid, "type": kind, "run": run}
+        if run == "script":
+            if kind == "chat":
+                raise HabitError(f"{where}：chat 触发不能跑脚本")
+            script = trig.get("script")
+            if not isinstance(script, str) or not SCRIPT_RE.match(script):
+                raise HabitError(f"{where}.script 要写成 scripts/名字.ps1（名字只用字母、数字、下划线、连字符），收到 {script!r}")
+            item["script"] = script
         if kind == "chat":
             when = trig.get("when")
             if not isinstance(when, str) or not when.strip():
@@ -649,7 +658,7 @@ class HabitStore:
             self.append_log(name, {"kind": "hand-edit", "result": "ok", "summary": "文件被手改过，已存一份到 .history"})
             return True
         # 运行写的 notes 和 log 本来就由程序提交；这里只管习惯本体三个文件
-        files = [f"habits/{name}/{f}" for f in PROTECTED_FILES if (folder / f).exists()]
+        files = [f"habits/{name}/{f}" for f in (*PROTECTED_FILES, "scripts") if (folder / f).exists()]
         if files and self.commit(f"手改：{name}", *files):
             self.append_log(name, {"kind": "hand-edit", "result": "ok", "summary": "文件被手改过，已记一次快照"})
             return True
@@ -667,15 +676,26 @@ class HabitStore:
 
     # -- 写
     def write(self, name: str, skill_md: str, habit_json: dict, request_text: str = "",
-              kind: str = "update", message: str = "") -> Habit:
-        """校验通过后写入并提交。``request_text`` 是这次的用户原话（空 = 不追加）。"""
+              kind: str = "update", message: str = "", scripts: dict | None = None) -> Habit:
+        """校验通过后写入并提交。``request_text`` 是这次的用户原话（空 = 不追加）。
+        ``scripts``：{"scripts/xx.ps1": 内容}，只有 HabitAuthor（用户亲口要求的那一轮）会传；习惯运行时写不了这个文件夹。"""
         validate_name(name)
         if kind not in ("create", "update"):
             raise HabitError(f"kind 只能是 create 或 update，收到 {kind!r}")
         validate_skill(name, skill_md)
         config = validate_habit(habit_json, self.day_cap, self.default_budget)
+        scripts = {k: v for k, v in (scripts or {}).items()}
+        for rel, body in scripts.items():
+            if not SCRIPT_RE.match(rel) or not isinstance(body, str) or not body.strip():
+                raise HabitError(f"脚本路径要写成 scripts/名字.ps1，内容不能为空：{rel!r}")
+            if len(body) > MAX_SCRIPT_CHARS:
+                raise HabitError(f"脚本 {rel} 太长了（上限 {MAX_SCRIPT_CHARS} 字）")
         self._ensure()
         exists = self.exists(name)
+        for trig in config["triggers"]:
+            rel = trig.get("script")
+            if rel and rel not in scripts and not (self.path(name) / rel).is_file():
+                raise HabitError(f"触发“{trig['id']}”要跑 {rel}，但这个脚本还没有写出来（要放进 scripts 里一起给）")
         if kind == "create" and exists:
             raise HabitError(f"“{name}”已经有了，要改它请用 update")
         if kind == "update" and not exists:
@@ -687,6 +707,10 @@ class HabitStore:
         (folder / "notes").mkdir(parents=True, exist_ok=True)
         _write_text(folder / "SKILL.md", skill_md.replace("\r\n", "\n").rstrip("\n") + "\n")
         _write_text(folder / "habit.json", json.dumps(config, ensure_ascii=False, indent=2) + "\n")
+        for rel, body in scripts.items():
+            (folder / "scripts").mkdir(exist_ok=True)
+            # 带 BOM：Windows PowerShell 5.1 不认无 BOM 的 UTF-8，中文会乱码
+            (folder / rel).write_text(body.replace("\r\n", "\n").rstrip("\n") + "\n", encoding="utf-8-sig", newline="\r\n")
         if request_text.strip():
             label = "创建" if kind == "create" else "修改"
             entry = f"## {_stamp(self.now())} · {label}\n{request_text.strip()}\n"

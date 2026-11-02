@@ -290,7 +290,7 @@ def test_over_budget_run_is_logged_and_not_rerun_today(tmp_path):
     assert row["result"] == "over_budget" and row["steps"] == 2
     assert (tmp_path / "ws" / NOTES / "0.md").exists()
     # 同一天里再到点（比如又加了一个触发）也不再跑
-    rig.director._habit_tasks.append(type("D", (), {"name": "idea-review", "id": "digest",
+    rig.director._habit_tasks.append(type("D", (), {"name": "idea-review", "id": "digest", "run": "task",
                                                     "trigger": habit["triggers"][0]})())
     rig.tick()
     rows = rig.store.read_log("idea-review")

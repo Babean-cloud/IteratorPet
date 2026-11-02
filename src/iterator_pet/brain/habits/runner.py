@@ -22,7 +22,8 @@ from datetime import datetime
 from pathlib import Path
 
 from ..docs import DOC_SUFFIXES, DocError, read_document
-from ..executor import LIST_LIMIT, READ_LIMIT, WRITE_LIMIT, OutsideWorkspace, _clip, resolve_inside
+from ..executor import (LIST_LIMIT, READ_LIMIT, WRITE_LIMIT, OutsideWorkspace, _clip, command_warnings,
+                        resolve_inside, run_powershell)
 from ..prompt import PERSONAS
 from ..web import WebError
 from .store import PROTECTED_FILES
@@ -31,6 +32,26 @@ PROTECTED_NAMES = frozenset(name.lower() for name in PROTECTED_FILES) | {"log.js
 PROTECTED_DIRS = frozenset({".git", ".history", ".trash"})
 SAY_LIMIT = 40
 DRIVE = re.compile(r"^[A-Za-z]:[\\/]")
+
+
+SCRIPT_TIMEOUT = 120.0
+SCRIPT_OUTPUT = 2000
+OUTSIDE = "涉及任务文件夹以外的路径"            # executor.DANGER 里那一条的说明
+WRITE_LIKE = re.compile(r"\b(copy|move|remove|rename|set|add|out|new|clear|tee|export)-[a-z]+|\b(cp|mv|rm|del|ren|copy|move|mkdir|md)\b|>",
+                        re.I)
+
+
+def script_block_reason(text: str) -> str:
+    """脚本该不该跑（权限与回退.md “执行命令”一行）：只涉及工作区就直接跑；出现工作区外的路径、又像写或删，就不跑。
+    返回空串 = 可以跑，否则是不跑的原因。注意：这只拦住“明着写出来”的越界，是提醒不是沙箱。"""
+    warnings = command_warnings(text)
+    if OUTSIDE not in warnings:
+        return ""
+    others = [w for w in warnings if w != OUTSIDE]
+    if others or WRITE_LIKE.search(text):
+        why = "、".join(others) if others else "像是要写或删文件"
+        return f"脚本里有工作区以外的路径，而且{why}"
+    return ""
 
 
 class WriteDenied(ValueError):
@@ -52,6 +73,8 @@ def check_write(root: str | Path, name: str, scope: str, rel) -> Path:
     parts = [p.rstrip(". ").lower() for p in target.relative_to(base).parts]    # Windows 会吞掉名字末尾的点和空格
     if any(p in PROTECTED_DIRS or p.startswith(".git") for p in parts):
         raise WriteDenied("那是程序自己管的目录，不能写")
+    if len(parts) >= 3 and parts[0] == "habits" and parts[2] == "scripts" or "scripts" in parts and parts[0] == "habits":
+        raise WriteDenied("scripts 里的脚本只有用户亲口要求时才能由作者写，你写不了")
     if parts and parts[-1] in PROTECTED_NAMES:
         raise WriteDenied(f"{target.name} 是习惯的本体 / 记录，只有用户能改，你写不了")
     if scope != "workspace":
@@ -68,7 +91,7 @@ class HabitRun:
     title: str
     trigger_id: str
     priority: str = "normal"
-    state: str = "running"             # running / done / failed / over_budget / cancelled
+    state: str = "running"             # running / done / failed / over_budget / cancelled / blocked（脚本被拦下，没跑）
     summary: str = ""
     say: str = ""
     error: str = ""
@@ -78,6 +101,8 @@ class HabitRun:
     files: list = field(default_factory=list)
     started: float = field(default_factory=time.time)
     cancelled: bool = False
+    kind: str = "task"                  # task（调模型）/ script（跑脚本，不调模型）
+    output: str = ""                    # 脚本的输出（前 2000 字）
     notes_read: list = field(default_factory=list)    # 这次运行读过的 notes 原文（A5：不许拼进 URL / 搜索词）
 
     @property
@@ -146,7 +171,8 @@ def system_prompt(character: str, habit, requests: str, notes: list[str], web_no
 class HabitRunner:
     """同一时间只跑一个习惯任务。``client_fn()`` → 带 ``complete_tools`` 的客户端（没 Key 返回 None）。"""
 
-    def __init__(self, client_fn, store, state, web_fn=lambda: None, wall=datetime.now):
+    def __init__(self, client_fn, store, state, web_fn=lambda: None, wall=datetime.now, shell_fn=run_powershell):
+        self.shell_fn = shell_fn
         self.client_fn = client_fn
         self.store = store
         self.state = state
@@ -180,6 +206,47 @@ class HabitRunner:
         self.current = run
         threading.Thread(target=self._run, args=(run, client, habit, trigger, character), daemon=True).start()
         return run
+
+    def start_script(self, habit, trigger: dict) -> HabitRun | None:
+        """跑触发里写的脚本：不调模型、不要 Key。已经有一个在跑返回 None。"""
+        if self.busy:
+            return None
+        run = HabitRun(habit.name, habit.title, trigger["id"], habit.config["speak"]["priority"], kind="script")
+        self.current = run
+        threading.Thread(target=self._run_script, args=(run, habit, trigger), daemon=True).start()
+        return run
+
+    def _run_script(self, run: HabitRun, habit, trigger: dict) -> None:
+        try:
+            rel = trigger["script"]
+            path = Path(os.path.realpath(habit.path / rel))
+            base = Path(os.path.realpath(habit.path / "scripts"))
+            if base not in path.parents or not path.is_file():
+                run.state, run.error = "failed", f"找不到脚本 {rel}"
+                run.summary = run.error
+                return
+            text = path.read_text(encoding="utf-8-sig")
+            reason = script_block_reason(text)
+            if reason:
+                run.state, run.summary = "blocked", f"没有运行 {rel}：{reason}"
+                return
+            command = "& '" + str(path).replace("'", "''") + "'"
+            code, output = self.shell_fn(command, str(self.store.root), SCRIPT_TIMEOUT, lambda: run.cancelled)
+            run.output = (output or "")[:SCRIPT_OUTPUT]
+            run.steps = 1
+            if code == 0:
+                run.state, run.summary = "done", (run.output.strip().splitlines() or ["（没有输出）"])[-1][:120]
+            else:
+                run.state, run.error = "failed", f"退出码 {code}"
+                run.summary = f"退出码 {code}：{(run.output.strip().splitlines() or [''])[-1][:100]}"
+        except Exception as exc:                        # noqa: BLE001
+            run.state, run.error = "failed", f"{type(exc).__name__}: {exc}"
+            run.summary = run.error[:200]
+        finally:
+            if run.state == "running":
+                run.state = "failed"
+            with self._lock:
+                self._done.append(run)
 
     # -- 工作线程 -------------------------------------------------------------
     def _run(self, run: HabitRun, client, habit, trigger: dict, character: str) -> None:
