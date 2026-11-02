@@ -55,7 +55,7 @@ FIELDS = (
           (("", "不用（只能读网页）"), ("tavily", "Tavily"), ("brave", "Brave"), ("searxng", "SearXNG"))),
     Field("联网", "search_api_key", "搜索服务 Key", "secret"),
     Field("联网", "search_base_url", "SearXNG 地址", "text"),
-    Field("习惯", "workspace_dir", "习惯工作区", "folder", hint="习惯和它们的笔记放这里；空 = 用户文件夹下的 IteratorWS（改了重启后生效）"),
+    Field("习惯", "workspace_dir", "习惯工作区", "folder", hint="习惯和它们的笔记放这里；空 = 用户文件夹下的 IteratorWS；改了立刻换，旧位置的习惯会复制过去"),
     Field("习惯", "cheap_hours", "便宜时段", "hours", hint="后台习惯挪到这段时间跑，例如 00:30-08:30；空 = 准点跑"),
     Field("习惯", "habit_default_budget.day_tokens", "每个习惯每天 token", "int", hint="习惯自己没写预算时的默认值；还受上面的每日总上限约束"),
     Field("外部工具", "ffmpeg_path", "ffmpeg", "text", hint="空 = 在 PATH 里找"),
@@ -67,7 +67,7 @@ FIELDS = (
 )
 
 # 保存后能立刻推给桌宠的；其余重启后生效
-LIVE = {"cheap_hours", "habit_default_budget.day_tokens", "llm_talkativeness", "llm_daily_token_cap", "perception", "screen_vision", "task_workspace",
+LIVE = {"workspace_dir", "cheap_hours", "habit_default_budget.day_tokens", "llm_talkativeness", "llm_daily_token_cap", "perception", "screen_vision", "task_workspace",
         "llm_base_url", "llm_model", "llm_vision_model", "auto_approve_readonly", "auto_approve_all",
         "llm_price_hit", "llm_price_miss", "llm_price_out", "update_check", "auto_quiet",
         "overseer_scroll_speed", "search_provider", "search_api_key", "search_base_url",

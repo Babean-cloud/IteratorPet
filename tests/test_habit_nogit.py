@@ -50,3 +50,33 @@ def test_without_state_nothing_changes(tmp_path):
     skill.write_text(SKILL + "\n手改\n", encoding="utf-8")
     store.get("idea-review")
     assert not (tmp_path / "ws" / ".history").exists()
+
+
+def test_set_root_switches_workspace_live_and_copies_habits(tmp_path):
+    state, store, skill = make(tmp_path)
+    store.append_note("idea-review", "ideas.md", "一条笔记")
+    new = tmp_path / "elsewhere"
+    assert store.set_root(new) == 1 and store.root == new
+    assert (new / "habits" / "idea-review" / "SKILL.md").is_file() and (tmp_path / "ws" / "habits").is_dir(), "旧的不动"
+    assert [h.name for h in store.list()] == ["idea-review"]
+    assert "一条笔记" in (new / "habits" / "idea-review" / "notes" / "ideas.md").read_text(encoding="utf-8")
+    store.write("idea-review", SKILL + "\n新位置改的\n", CONFIG, "改", kind="update")
+    assert "新位置改的" in (new / "habits" / "idea-review" / "SKILL.md").read_text(encoding="utf-8")
+    assert "新位置改的" not in skill.read_text(encoding="utf-8")
+    assert store.set_root(new) == 0
+    third = tmp_path / "third"
+    third.joinpath("habits").mkdir(parents=True)
+    assert store.set_root(third) == 0 and store.list() == [], "新位置已有 habits 文件夹就不覆盖也不复制"
+
+
+def test_habits_command_shows_where_the_files_are(tmp_path):
+    from types import SimpleNamespace
+
+    from iterator_pet.platform.quick_bar import execute
+
+    state, store, skill = make(tmp_path)
+    pet = SimpleNamespace(habits=store, habit_state=state)
+    assert str(store.root) in execute(pet, "/habits")[1]
+    assert str(skill.parent) in execute(pet, "/habit idea-review")[1]
+    empty = SimpleNamespace(habits=HabitStore(tmp_path / "none", git=lambda: None), habit_state=state)
+    assert str(tmp_path / "none") in execute(empty, "/habits")[1]

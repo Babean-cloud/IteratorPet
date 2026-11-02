@@ -1539,6 +1539,11 @@ class PetWindow(PetCanvas):
             director.daily_token_cap = int(cfg.llm_daily_token_cap)
             director.screen_vision_mode = cfg.screen_vision
             director.task_workspace = self.task_workspace()
+        if "workspace_dir" in changed:
+            from ..brain.habits.store import workspace_path
+
+            copied = self.habits.set_root(workspace_path(cfg))          # 立刻换，不用重启；旧位置的习惯复制过来
+            self.chatlog.add("system", f"习惯工作区换到了 {self.habits.root}" + (f"（带过来 {copied} 个习惯）" if copied else ""))
         if "cheap_hours" in changed and director is not None and director.habit_scheduler is not None:
             director.habit_scheduler.set_cheap_hours(cfg.cheap_hours)
         if "habit_default_budget.day_tokens" in changed:
@@ -1556,7 +1561,7 @@ class PetWindow(PetCanvas):
         if director is not None and {"llm_base_url", "llm_model", "llm_vision_model"} & set(changed):
             self._setup_brain()                  # 换了接口 / 模型：重建客户端
         save(cfg)
-        return bool({"chat_hotkey", "bridge_enabled", "workspace_dir"} & set(changed))
+        return bool({"chat_hotkey", "bridge_enabled"} & set(changed))
 
     def show_ai_panel(self) -> None:
         from .ai_panel import AIPanel

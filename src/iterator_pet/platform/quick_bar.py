@@ -119,8 +119,9 @@ def _do_habits(pet, command) -> tuple[bool, str]:
     if store is None:
         return True, "✗ 习惯系统没启动。"
     habits = store.list()
+    where = f"工作区：{store.root}"
     if not habits and not store.errors:
-        return True, "还没有习惯。跟它说“帮我……”，比如“我随口说的想法你帮我记下来，每天回顾”。"
+        return True, "还没有习惯。跟它说“帮我……”，比如“我随口说的想法你帮我记下来，每天回顾”。\n" + where
     state = getattr(pet, "habit_state", None)
     lines = []
     for habit in habits:
@@ -129,7 +130,7 @@ def _do_habits(pet, command) -> tuple[bool, str]:
             flag = f"（自动暂停：{state.paused(habit.name)}）"
         lines.append(f"{habit.name}｜{habit.title}{flag}　{habit.description[:40]}")
     lines += [f"{name}｜读不了：{why[:40]}" for name, why in store.errors.items()]
-    return True, "\n".join(lines + ["/habit 名字 看详情"])
+    return True, "\n".join(lines + ["/habit 名字 看详情", where])
 
 
 def _trigger_text(trigger: dict) -> str:
@@ -169,6 +170,7 @@ def _do_habit(pet, command) -> tuple[bool, str]:
             return True, f"✗ {exc}"
         return True, f"✓ 「{habit.title}」{ {'pause': '暂停了', 'resume': '恢复了', 'revert': '撤回到上一版了'}[op] }。"
     lines = [f"{habit.title}（{habit.name}）{'' if habit.enabled else '　已暂停'}", habit.description]
+    lines.append(f"文件：{habit.path}")
     lines += ["　" + _trigger_text(t) for t in habit.config["triggers"]]
     perms = habit.config["permissions"]
     lines.append(f"权限：{'可联网' if perms['web'] else '不联网'}，写 {perms['write']}")

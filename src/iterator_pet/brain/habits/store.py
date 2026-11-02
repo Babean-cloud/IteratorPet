@@ -470,6 +470,24 @@ class HabitStore:
         except HabitError:
             return False
 
+    def set_root(self, root: Path | str) -> int:
+        """工作区换位置（设置里改了 workspace_dir），立刻生效。新位置还没有 habits 文件夹时，把旧位置的习惯复制过去
+        （不动旧的；git 历史不带，新位置第一次用到会重新 init）。返回复制了几个习惯。"""
+        new = Path(root)
+        if os.path.normcase(str(new)) == os.path.normcase(str(self.root)):
+            return 0
+        copied = 0
+        src = self.root / "habits"
+        if src.is_dir() and not (new / "habits").exists():
+            new.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(src, new / "habits")
+            copied = sum(1 for d in (new / "habits").iterdir() if d.is_dir())
+        self.root = new
+        self._ready = False
+        self._git = None
+        self._cat_sig = None
+        return copied
+
     # -- git / 快照
     def _ensure(self) -> None:
         """工作区第一次用到才创建；有 git 就 init。"""
@@ -762,6 +780,8 @@ class HabitStore:
             _write_text(folder / "request.md", (old.rstrip("\n") + "\n\n" if old.strip() else "") + entry)
         elif not (folder / "request.md").exists():
             _write_text(folder / "request.md", "")
+        if not (folder / "SKILL.md").is_file() or not (folder / "habit.json").is_file():
+            raise HabitError(f"写完检查发现 {folder} 里没有 SKILL.md / habit.json（磁盘满了？权限不够？）")
         self.commit(message or f"{'新建' if kind == 'create' else '修改'}：{name}", f"habits/{name}")
         self._note_hashes(name)
         return self._load(name)
