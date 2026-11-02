@@ -71,6 +71,27 @@ def _selftest(out: Path) -> int:
         from iterator_pet.platform.mixer import Mixer
         return Mixer().mix(4).shape
 
+    def habits():
+        # 习惯系统：模块都能导入；在临时工作区写一个最小习惯、读回、撤回一次。有 git 走 git，没有走 .history，两条都试
+        from iterator_pet.brain.habits import author, runner, scheduler        # noqa: F401
+        from iterator_pet.brain.habits.store import HabitStore, find_git
+        skill = ("---\nname: selftest\ndescription: 自检\nmetadata:\n  iteratorpet-title: 自检\n---\n"
+                 "## 做法\n记到 notes/a.md\n")
+        config = {"schema": 1, "triggers": [{"id": "t", "type": "chat", "when": "x", "run": "inline"}]}
+        modes = []
+        for label, git in (("git", find_git), ("no-git", lambda: None)):
+            if label == "git" and find_git() is None:
+                continue
+            with tempfile.TemporaryDirectory() as tmp:
+                store = HabitStore(Path(tmp) / "ws", git=git)
+                store.write("selftest", skill, config, "原话", kind="create")
+                store.write("selftest", skill + "\n第二版\n", config, "改", kind="update")
+                back = store.revert("selftest")
+                assert "第二版" not in back.body and store.has_git == (label == "git"), label
+                modes.append(label)
+        return "+".join(modes)
+
+    check("habits", habits)
     check("pypinyin", pinyin)
     check("places", places)
     check("markitdown+docx", docs)
