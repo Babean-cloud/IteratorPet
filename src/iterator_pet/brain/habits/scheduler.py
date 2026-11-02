@@ -4,6 +4,8 @@
 * ``window: cheap``：取 ``at`` 之后、落在 ``cheap_hours``（如 ``00:30-08:30``）里的第一个时刻；``cheap_hours`` 为空就准点；
 * 错过了（桌宠没开 / 你不在）：``CATCH_UP`` 内补跑一次，超过就跳过并在 log 里记一笔；
 * 新习惯 / 新触发第一次被看到时只记个起点，不会因为“今天这个点已经过了”立刻补跑；
+* event 触发：user_back / day_start / task_done / reflect 是桌宠自己的事件；窗口、进程、文件之类的和心事共用 ``Watcher``；
+  同一个事件 10 分钟内最多触发一次（day_start 一天一次）；
 * 你在全屏 / 勿扰：task 照常，inline（要开口的）等到你退出再说。
 """
 
@@ -13,6 +15,9 @@ import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
+from .store import WATCH_EVENTS, WATCH_PARAMS
+
+EVENT_DEBOUNCE = 600.0       # 同一个 event 触发两次之间至少隔这么久（防抖）
 CATCH_UP = 12 * 3600.0
 LATE_AFTER = 600.0            # 比预定时刻晚了这么久才算“补跑”
 DAY_NAMES = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
@@ -25,6 +30,7 @@ class Due:
     trigger: dict
     scheduled: float          # 预定时刻（时间戳）；event 触发是触发那一刻
     late: bool = False
+    why: str = ""            # event 触发的原因（Watcher 给的一句话）
 
     @property
     def run(self) -> str:
@@ -76,9 +82,11 @@ def day_matches(days: str, day: date, last_run: float | None) -> bool:
 
 
 class HabitScheduler:
-    def __init__(self, store, state, cheap_hours: str = ""):
+    def __init__(self, store, state, cheap_hours: str = "", watcher=None):
         self.store = store
         self.state = state
+        self._held: dict[str, Due] = {}      # 勿扰 / 你不在时触发的 inline 事件，等你回来再给
+        self.watcher = watcher             # errands.Watcher（没给就不盯窗口 / 进程 / 文件）
         self.cheap = parse_cheap_hours(cheap_hours)
 
     def set_cheap_hours(self, text: str) -> None:
@@ -94,10 +102,14 @@ class HabitScheduler:
         ``events``：这一刻刚发生的内部事件（``user_back`` 等）。day_start 自己判断：你在场的这一天第一次。"""
         out: list[Due] = []
         stamp = now.timestamp()
+        watch: dict[str, tuple] = {}
         for habit in self._active():
             for trig in habit.config["triggers"]:
                 if trig["type"] == "time":
                     item = self._due_time(habit, trig, now, stamp)
+                elif trig["type"] == "event" and trig["event"] in WATCH_EVENTS:
+                    watch[f"habit:{habit.name}:{trig['id']}"] = (habit, trig)       # 下面一起交给 Watcher
+                    continue
                 elif trig["type"] == "event":
                     item = self._due_event(habit, trig, now, stamp, events, away)
                 else:
@@ -107,6 +119,30 @@ class HabitScheduler:
                 if trig["run"] == "inline" and (quiet or away):
                     continue
                 out.append(item)
+        out += self._due_watch(watch, stamp, quiet, away)
+        return out
+
+    def _due_watch(self, watch: dict, stamp: float, quiet: bool, away: bool) -> list[Due]:
+        if not watch or self.watcher is None:
+            return []
+        pseudo = [{"id": key, "status": "waiting",
+                   "triggers": [{"type": t["event"], **{k: t[k] for k in WATCH_PARAMS if k in t}}]}
+                  for key, (_, t) in watch.items()]
+        out = []
+        if not (quiet or away):
+            out += [d for key, d in self._held.items() if key in watch]
+            self._held.clear()
+        for errand, why in self.watcher.poll(pseudo):            # 每次都 poll，基准才会跟着走；防抖在下面
+            habit, trig = watch[errand["id"]]
+            self.watcher.reset(errand["id"])                      # 触发过就重取基准：这类事可能再发生
+            last = self.state.last_run(habit.name, trig["id"])
+            if last and stamp - last < EVENT_DEBOUNCE:
+                continue
+            due = Due(habit.name, habit.title, trig, stamp, why=why)
+            if trig["run"] == "inline" and (quiet or away):
+                self._held[errand["id"]] = due
+                continue
+            out.append(due)
         return out
 
     def _due_time(self, habit, trig, now: datetime, stamp: float) -> Due | None:
@@ -135,8 +171,11 @@ class HabitScheduler:
 
     def _due_event(self, habit, trig, now: datetime, stamp: float, events, away: bool) -> Due | None:
         event = trig["event"]
-        if event == "user_back":
-            return Due(habit.name, habit.title, trig, stamp) if "user_back" in events else None
+        if event in ("user_back", "task_done", "reflect"):
+            if event not in events:
+                return None
+            last = self.state.last_run(habit.name, trig["id"])
+            return None if last and stamp - last < EVENT_DEBOUNCE else Due(habit.name, habit.title, trig, stamp)
         if event == "day_start":
             if away:
                 return None

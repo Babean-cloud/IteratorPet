@@ -1117,6 +1117,7 @@ class PetWindow(PetCanvas):
         """按 config 建/拆导演。拆掉时清掉残留指令，台词池接回来。"""
         from ..brain.director import Director
         from ..brain.habits.runner import HabitRunner
+        from ..brain.errands import Watcher
         from ..brain.habits.scheduler import HabitScheduler
         from ..brain.perception import DEFAULT_BLACKLIST, Perception
 
@@ -1153,7 +1154,8 @@ class PetWindow(PetCanvas):
                 errands=self.errands if cfg.perception != "off" else None,
                 habits=self.habits,
                 habit_state=self.habit_state,
-                habit_scheduler=HabitScheduler(self.habits, self.habit_state, getattr(cfg, "cheap_hours", "")),
+                habit_scheduler=HabitScheduler(self.habits, self.habit_state, getattr(cfg, "cheap_hours", ""),
+                                               watcher=Watcher()),
                 habit_runner=HabitRunner(lambda: self.llm_client(timeout=90.0), self.habits, self.habit_state,
                                          web_fn=self._web_tools),
             )

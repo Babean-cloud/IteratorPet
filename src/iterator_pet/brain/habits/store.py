@@ -23,7 +23,10 @@ NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")        # 小写字母、数字
 MAX_BODY_LINES = 500
 TRIGGER_TYPES = ("chat", "time", "event")
 RUN_KINDS = ("inline", "task")
-EVENTS = ("user_back", "day_start")                      # P0 只做这两个（§4.3）
+INTERNAL_EVENTS = ("user_back", "day_start", "task_done", "reflect")          # 桌宠自己的事件
+WATCH_EVENTS = ("title_change", "window_gone", "window_appears", "text_appears", "process_exit", "file_change")   # 和心事的触发同名
+EVENTS = INTERNAL_EVENTS + WATCH_EVENTS
+WATCH_PARAMS = ("window", "words", "name", "path")
 WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 WRITE_SCOPES = ("notes", "workspace")
 PRIORITIES = ("low", "normal", "high")
@@ -214,8 +217,18 @@ def validate_habit(data, day_cap: int = 0, defaults: dict | None = None) -> dict
         else:
             event = trig.get("event")
             if event not in EVENTS:
-                raise HabitError(f"{where}.event 目前只支持 {'/'.join(EVENTS)}")
+                raise HabitError(f"{where}.event 只支持 {'/'.join(EVENTS)}")
             item["event"] = event
+            if event in WATCH_EVENTS:
+                from ..errands import normalize_trigger      # 参数规则和心事一样：窗口名 / 词 / 进程名 / 路径
+
+                norm = normalize_trigger({"type": event, **{k: trig.get(k) for k in WATCH_PARAMS if trig.get(k) is not None}})
+                if norm is None:
+                    need = {"title_change": "window", "window_gone": "window", "window_appears": "window",
+                            "text_appears": "window 和 words（至少一个 2 字以上的词）", "process_exit": "name",
+                            "file_change": "path"}[event]
+                    raise HabitError(f"{where}：{event} 事件要写 {need}")
+                item.update({k: v for k, v in norm.items() if k != "type"})
         cleaned.append(item)
     out["triggers"] = cleaned
 

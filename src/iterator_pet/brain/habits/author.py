@@ -41,7 +41,12 @@ habit.json（schema 固定为 1）：
  "budget":{"run_tokens":30000,"run_steps":20,"day_tokens":80000},
  "speak":{"priority":"normal"}}
 - type：chat（用户的话命中，只能 inline）/ time（到点；days 取 daily、weekdays、mon,wed、every:3d；at 是 24 小时制 HH:MM）/
-  event（user_back 用户离开后回来、day_start 当天第一次见到用户）
+  event（发生了某件事；写法 {"id":"x","type":"event","event":"…","run":"inline"|"task",…参数}）。event 取值：
+  user_back（用户离开后回来）、day_start（当天第一次见到用户）、task_done（替用户做的任务结束了）、reflect（它反思时）；
+  还有盯电脑上的事（参数写在同一个对象里）：title_change / window_gone / window_appears 要 "window":"窗口标题或程序名里的词"，
+  text_appears 要 "window" 和 "words":["词",…]，process_exit 要 "name":"进程名"，file_change 要 "path":"文件或文件夹路径"。
+  例：“测试跑完告诉我结果” = {"id":"tests-done","type":"event","event":"process_exit","name":"pytest","run":"inline"}
+  同一个事件 10 分钟内最多触发一次
 - run：inline = 在对话里顺手做（记一笔、到点用一两句话说出来）；task = 后台单独跑（要联网查资料、整理文件这类多步的活）
 - window:"cheap" 只给 task 的 time 触发用：放到便宜的夜间时段去跑，用户提到“晚上便宜 / 夜里跑”才加
 - 凡是要联网查资料、整理、写摘要这类要多步、要调模型才能完成的活，必须有一个对应的 run:task 的触发（time 或 event），

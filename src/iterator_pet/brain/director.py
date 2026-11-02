@@ -223,7 +223,7 @@ class Director:
         self._habit_say: list[tuple[str, bool, str]] = []   # 习惯任务跑完、等着开口的话 (话, 是否 direct, 原因)
         self._habit_inflight = None                # 正在为哪个 inline 习惯请求（apply 时要用）
         self._habit_budget_day: str | None = None  # 全局额度用完的提示今天说过没有
-        self._back_pending = False                 # 用户刚回来（user_back 事件，下次检查习惯时用掉）
+        self._habit_events: set[str] = set()       # 刚发生的内部事件（user_back / task_done / reflect），下次检查习惯时用掉
         self._last_habit_change: dict | None = None   # 最近一次习惯改动 {name,title,op,summary,at}（A1：给“改回去”一个抓手）
         self._habit_question: dict | None = None   # 作者反问过的：用户下一句的回答要和原话并在一起再写
         self.pearls = pearls                       # PearlStore（可以没有）
@@ -388,6 +388,7 @@ class Director:
         """委托任务（dsh）结束：让它用自己的口吻说一句。结果全文在对话窗口里，这里只给摘要。"""
         self._extra_obs["task_result"] = ("完成：" if ok else "失败：") + text[:600]
         self.log(f"你替用户做的演算{'完成' if ok else '失败'}了")
+        self._habit_events.add("task_done")
         # 保底：模型那一轮没说话（精力低 / 觉得没必要），或者一直没轮到，也要让用户知道结束了
         self._task_notice = ("演算完成了。结果在对话窗口里。" if ok else "……演算没做成。原因在对话窗口里。", self.clock())
         self.bump("task_done")
@@ -773,7 +774,7 @@ class Director:
             self.away = False
             self.planner.clear(sim)
             self.log("用户回来了")
-            self._back_pending = True
+            self._habit_events.add("user_back")
             self.bump("back")
         elif self.away and self.planner.idle:
             self.planner.load([{"do": "sleep", "s": 300}], sim)
@@ -1017,6 +1018,7 @@ class Director:
             ctx.since_reflect = 0
             ctx.active_seconds = 0.0
             ctx.reflections += 1
+            self._habit_events.add("reflect")
             ctx.last_reflect = self.wall().timestamp()
         threading.Thread(
             target=self._run, args=(reason, messages, brief, fold_upto, image, user_text, tools), daemon=True
@@ -1415,14 +1417,13 @@ class Director:
         """跟着感知节拍：哪些习惯到点了。inline 排队等开口，task 排队等后台跑。"""
         if self.habit_scheduler is None:
             return
-        events = ("user_back",) if self._back_pending else ()
-        self._back_pending = False
+        events, self._habit_events = tuple(self._habit_events), set()
         for due in self.habit_scheduler.due(self.wall(), quiet=self.quiet, away=self.away, events=events):
             queue_ = self._habit_inline if due.run == "inline" else self._habit_tasks
             if any(d.name == due.name and d.id == due.id for d in queue_):
                 continue
             if self.habit_state is not None:
-                self.habit_state.mark_run(due.name, due.id, due.scheduled if due.trigger["type"] == "time" else None)
+                self.habit_state.mark_run(due.name, due.id, due.scheduled)
             queue_.append(due)
         if sim is not None:
             self._pump_habit_tasks(sim)
@@ -1517,6 +1518,8 @@ class Director:
             info["notes"] = notes
         if due.late:
             info["late"] = True
+        if due.why:
+            info["why"] = due.why                          # 事件触发的原因（比如“进程 xx 退出了”）
         self.log(f"习惯「{habit.title}」到点了（{due.id}）")
         self._start(sim, "habit", None, extra={"habit": info})
 

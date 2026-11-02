@@ -112,7 +112,7 @@ def _cfg(**over):
     (lambda c: c["triggers"][1].update(at="9:5"), "HH:MM"),
     (lambda c: c["triggers"][1].update(days="sometimes"), "days"),
     (lambda c: c["triggers"][1].update(window="night"), "window"),
-    (lambda c: c["triggers"].append({"id": "e", "type": "event", "event": "reflect", "run": "task"}), "event"),
+    (lambda c: c["triggers"].append({"id": "e", "type": "event", "event": "nope", "run": "task"}), "event"),
     (lambda c: c.update(permissions={"web": "yes"}), "web"),
     (lambda c: c.update(permissions={"write": "everything"}), "write"),
     (lambda c: c.update(budget={"run_tokens": -1}), "正整数"),
