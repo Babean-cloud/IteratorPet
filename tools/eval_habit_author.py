@@ -25,6 +25,13 @@ STEPS = (
 )
 
 
+# 单步场景：只建一个习惯，看作者的输出（P1 B1 / B3）
+ONE_SHOT = {
+    "events": "我在终端里跑 pytest 的时候，跑完了你就告诉我一声结果",
+    "sync": "每天晚上把我的工作区同步到 GitHub 的私人仓库上",
+}
+
+
 def real_client():
     from iterator_pet.brain.client import ChatClient
     from iterator_pet.config import llm_api_key, load
@@ -43,6 +50,26 @@ def brief(habit) -> str:
         rows.append(f"    {t['id']}: {t['type']}/{t['run']} {json.dumps(extra, ensure_ascii=False)}")
     perms = habit.config["permissions"]
     return "\n".join(rows) + f"\n    permissions={perms}  budget={habit.config['budget']}"
+
+
+def run_one_shot(client, tmp: Path, text: str) -> None:
+    store = HabitStore(tmp / "ws", git=lambda: None)
+    result = author.author(client, "pebbles", text, None, day_cap=10_000_000)
+    print(f"-- {text[:30]}…  token {sum((u or {}).get('total_tokens', 0) for u in result.usages)}")
+    if not result.ok:
+        print("   ✗ 失败：", result.error)
+        return
+    if result.questions:
+        print("   ? 反问：", result.questions)
+        return
+    try:
+        habit = store.write(result.name, result.skill_md, result.habit_json, text, kind="create", scripts=result.scripts)
+    except HabitError as exc:
+        print("   ✗ 写入失败：", exc)
+        return
+    print(f"   ✓ {habit.name}（{habit.title}）{result.change_summary}\n{brief(habit)}")
+    for rel, body in result.scripts.items():
+        print(f"   脚本 {rel}（{len(body.splitlines())} 行）：" + " | ".join(l.strip() for l in body.splitlines() if "gh " in l or "git push" in l)[:200])
 
 
 def run_chain(client, tmp: Path) -> None:
@@ -77,12 +104,16 @@ def run_chain(client, tmp: Path) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("-n", "--repeat", type=int, default=1)
+    ap.add_argument("-s", "--scenario", choices=sorted(ONE_SHOT), help="只跑单步场景（events / sync），不跑 v1→v3 链")
     args = ap.parse_args()
     client = real_client()
     for run in range(args.repeat):
         print(f"==== 第 {run + 1} 次")
         with tempfile.TemporaryDirectory() as tmp:
-            run_chain(client, Path(tmp))
+            if args.scenario:
+                run_one_shot(client, Path(tmp), ONE_SHOT[args.scenario])
+            else:
+                run_chain(client, Path(tmp))
 
 
 if __name__ == "__main__":
