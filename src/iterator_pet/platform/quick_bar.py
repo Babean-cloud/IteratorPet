@@ -15,6 +15,7 @@ from PySide6.QtGui import QPainter
 from PySide6.QtWidgets import QApplication, QLabel, QLineEdit, QListWidget, QVBoxLayout, QWidget
 
 from ..brain import commands as cmd
+from .command_completion import CompletionProvider, Suggestion
 from .ui_theme import FAINT, GAP_S, MEDIUM_GREY, NAMES, RED_HOVER, SHADOW, _paint_frame
 
 HISTORY_KEEP = 50
@@ -364,7 +365,8 @@ class QuickBar(QWidget):
         layout.addWidget(self.menu)
         layout.addWidget(self.hint)
         self.setFixedWidth(self.WIDTH + 2 * SHADOW)
-        self._matches: list[cmd.Spec] = []
+        self._completion = CompletionProvider(pet)
+        self._matches: list[Suggestion] = []
         self._history = self._load_history()
         self._cursor = len(self._history)
         self.holo = False                         # 监视者投影皮肤（第三期）：透明底、全息色字，位置贴着监视者
@@ -411,6 +413,7 @@ class QuickBar(QWidget):
         from .ui_theme import accent_for
 
         self.apply_skin()
+        self._completion.refresh()                 # 输入条重开后看得到新建的习惯
         name = NAMES.get(self.pet.character, "迭代器")
         self.input.setPlaceholderText(f"对{name}说点什么，或者 / 看命令")
         if not self.holo:
@@ -475,10 +478,10 @@ class QuickBar(QWidget):
             self.move(self.x(), bottom - self.height())
 
     def _update_hints(self, text: str) -> None:
-        self._matches = cmd.complete(text)
+        self._matches = self._completion.complete(text)
         self.menu.clear()
-        for spec in self._matches:
-            self.menu.addItem(f"/{spec.name}　{spec.help}")
+        for item in self._matches:
+            self.menu.addItem(item.label)
         if self._matches:
             self.menu.setCurrentRow(0)
             rows = min(len(self._matches), 10)
@@ -496,7 +499,7 @@ class QuickBar(QWidget):
 
     def _accept_completion(self, row: int) -> None:
         if 0 <= row < len(self._matches):
-            self.input.setText(f"/{self._matches[row].name} ")
+            self.input.setText(self._matches[row].text)
             self.input.setFocus()
 
     # -- 键盘 -------------------------------------------------------------------
@@ -543,8 +546,9 @@ class QuickBar(QWidget):
         line = self.input.text().strip()
         if not line:
             return
-        if self._matches and " " not in line and cmd.complete(line) and line[1:] not in {
-                n for s in self._matches for n in (s.name, *s.aliases)}:
+        command_matches = cmd.complete(line) if " " not in line else []
+        if self._matches and command_matches and line[1:] not in {
+                name for spec in command_matches for name in (spec.name, *spec.aliases)}:
             self._accept_completion(self.menu.currentRow())   # 敲了半个命令名就回车：先补全
             return
         self._remember(line)

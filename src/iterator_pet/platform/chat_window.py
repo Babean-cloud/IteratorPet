@@ -15,13 +15,14 @@ from __future__ import annotations
 import re
 from datetime import datetime
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtWidgets import (
-    QButtonGroup, QCheckBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QLineEdit, QMenu, QPlainTextEdit,
+    QButtonGroup, QCheckBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QLineEdit, QListWidget, QMenu, QPlainTextEdit,
     QPushButton, QScrollArea, QSizePolicy, QSpacerItem, QVBoxLayout, QWidget,
 )
 
 from ..brain.executor import MODES
+from .command_completion import CompletionProvider, Suggestion
 from .ui_theme import (
     GAP, GAP_S, NAMES, PRONOUNS, ChoiceCard, FramedDialog, FramedWindow, accent_for, button_row,
     label, section, spaced, sprite_icon,
@@ -288,7 +289,15 @@ class ChatWindow(FramedWindow):
         # ---- 输入行：输入框 + 同高的方形发送键 ----
         self.input = QLineEdit()
         self.input.setPlaceholderText("说点什么，回车发送；/help 看命令")
+        self._completion = CompletionProvider(pet)
+        self._matches: list[Suggestion] = []
+        self.input.installEventFilter(self)
+        self.input.textChanged.connect(self._update_completions)
         self.input.returnPressed.connect(self._send)
+        self.completion_menu = QListWidget()
+        self.completion_menu.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.completion_menu.itemClicked.connect(lambda item: self._accept_completion(self.completion_menu.row(item)))
+        self.completion_menu.hide()
         send = QPushButton()
         send.setObjectName("square")
         icon = sprite_icon("pageright")          # 游戏菜单的翻页箭头
@@ -333,6 +342,7 @@ class ChatWindow(FramedWindow):
         self.body.addWidget(self.scroll, 1)
         self.body.addWidget(self.approval)
         self.body.addLayout(composer)
+        self.body.addWidget(self.completion_menu)
         self.body.addLayout(footer)
 
         # 拖文件 / 文字进来 = 递珍珠；管理员身份下同桌宠本体，改走 WM_DROPFILES（见 legacy_drop.py）
@@ -404,6 +414,8 @@ class ChatWindow(FramedWindow):
         self.status.setToolTip(text)
 
     def open(self) -> None:
+        self._completion.refresh()
+        self._update_completions(self.input.text())
         self.show()
         self.raise_()
         self.activateWindow()
@@ -411,6 +423,38 @@ class ChatWindow(FramedWindow):
         width = self._usable_width()
         for row in self._rows:
             row.refit(width)
+
+    def _update_completions(self, text: str) -> None:
+        self._matches = self._completion.complete(text)
+        self.completion_menu.clear()
+        for item in self._matches:
+            self.completion_menu.addItem(item.label)
+        if self._matches:
+            self.completion_menu.setCurrentRow(0)
+            rows = min(len(self._matches), 6)
+            self.completion_menu.setFixedHeight(rows * self.completion_menu.sizeHintForRow(0)
+                                                + 2 * self.completion_menu.frameWidth() + 8)
+        self.completion_menu.setVisible(bool(self._matches))
+
+    def _accept_completion(self, row: int) -> None:
+        if 0 <= row < len(self._matches):
+            self.input.setText(self._matches[row].text)
+            self.input.setFocus()
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802
+        if obj is self.input and event.type() == QEvent.Type.KeyPress and self._matches:
+            if event.key() == Qt.Key.Key_Tab:
+                self._accept_completion(self.completion_menu.currentRow())
+                return True
+            if event.key() in (Qt.Key.Key_Up, Qt.Key.Key_Down):
+                step = -1 if event.key() == Qt.Key.Key_Up else 1
+                self.completion_menu.setCurrentRow((self.completion_menu.currentRow() + step) % len(self._matches))
+                return True
+            if event.key() == Qt.Key.Key_Escape:
+                self.completion_menu.hide()
+                self._matches = []
+                return True
+        return super().eventFilter(obj, event)
 
     # -- 动作 ------------------------------------------------------------------
     def _send(self) -> None:
